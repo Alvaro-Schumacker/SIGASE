@@ -9,7 +9,7 @@ import re
 import secrets
 import sqlite3
 import unicodedata
-from datetime import date
+from datetime import date, datetime, timezone
 from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, urlparse
 BASE_DIR = Path(__file__).resolve().parent
 UNIT_RANKS = ("Cap", "1º Ten", "2º Ten", "STen", "1º Sgt", "2º Sgt", "3º Sgt", "Cb EP", "Sd EP", "Sd EV")
 PASSWORD_ITERATIONS = 180_000
-ID_TABLES = {"app_users", "task_categories", "personnel", "unit_personnel", "documents", "force_maps", "vacation_plan", "duty_scales", "notices"}
+ID_TABLES = {"app_users", "task_categories", "tasks", "personnel", "unit_personnel", "documents", "force_maps", "vacation_plan", "duty_scales", "notices"}
 
 
 def _password_hash(password: str, salt: bytes | None = None) -> str:
@@ -308,6 +308,18 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 rows = db.execute("SELECT id,name FROM task_categories ORDER BY name COLLATE NOCASE").fetchall()
             self._json(200, {"categories": [dict(row) for row in rows]})
             return
+        if path == "/api/tasks":
+            current = self._current_user_record()
+            if not current:
+                self._require_user()
+                return
+            with connect_db() as db:
+                rows = db.execute("""SELECT t.*, r.display_name AS requester, a.display_name AS assignee
+                    FROM tasks t JOIN app_users r ON r.id=t.requester_id JOIN app_users a ON a.id=t.assignee_id
+                    WHERE t.requester_id=? OR t.assignee_id=? ORDER BY t.created_at DESC, t.id DESC""",
+                    (current["id"], current["id"])).fetchall()
+            self._json(200, {"tasks": [self._task_record(row) for row in rows]})
+            return
         if path == "/api/notices":
             current_user = self._current_user_record()
             if not current_user:
@@ -381,6 +393,49 @@ class SigaseHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if path == "/api/tasks":
+            current = self._current_user_record()
+            if not current:
+                self._require_user()
+                return
+            body = self._body()
+            title, description = body.get("title"), body.get("description", "")
+            priority, due_date = body.get("priority"), body.get("due")
+            try:
+                assignee_id = int(body.get("assignee_id"))
+            except (TypeError, ValueError):
+                assignee_id = None
+            try:
+                parsed_due = date.fromisoformat(due_date).isoformat() if isinstance(due_date, str) else None
+            except ValueError:
+                parsed_due = None
+            if not isinstance(title, str) or not title.strip() or len(title.strip()) > 100:
+                self._json(400, {"error": "Informe um título com até 100 caracteres."})
+                return
+            if not isinstance(description, str) or len(description) > 500:
+                self._json(400, {"error": "A descrição deve ter até 500 caracteres."})
+                return
+            if priority not in ("Baixa", "Média", "Alta") or not parsed_due:
+                self._json(400, {"error": "Informe uma prioridade e um prazo válidos."})
+                return
+            with connect_db() as db:
+                assignee = db.execute("SELECT id FROM app_users WHERE id=?", (assignee_id,)).fetchone() if assignee_id else None
+                if not assignee:
+                    self._json(400, {"error": "Selecione um responsável válido."})
+                    return
+                classification = body.get("classification", "")
+                if not isinstance(classification, str):
+                    classification = ""
+                now = datetime.now(timezone.utc).isoformat()
+                events = [["Criada", current["display_name"], now]]
+                cur = db.execute("""INSERT INTO tasks
+                    (title,description,classification,requester_id,assignee_id,priority,due_date,status,events_json,updated_at)
+                    VALUES (?,?,?,?,?,?,?,'Pendente',?,CURRENT_TIMESTAMP)""",
+                    (title.strip(), description.strip(), classification[:120], current["id"], assignee_id, priority, parsed_due, json.dumps(events, ensure_ascii=False)))
+                row = db.execute("""SELECT t.*, r.display_name AS requester, a.display_name AS assignee
+                    FROM tasks t JOIN app_users r ON r.id=t.requester_id JOIN app_users a ON a.id=t.assignee_id WHERE t.id=?""", (cur.lastrowid,)).fetchone()
+            self._json(201, {"task": self._task_record(row)})
+            return
         if path == "/api/login":
             body = self._body()
             login, password = body.get("login"), body.get("password")
@@ -536,8 +591,8 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             with connect_db() as db:
                 cur = db.execute("""
                     INSERT INTO unit_personnel
-                    (full_name, war_name, birth_date, rank, qm, section, address, cpf, military_id, additional_data, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    (full_name, war_name, birth_date, rank, qm, section, address, cpf, military_id, additional_data, civil_id, prec_cp, blood_type, email, religion, phone, birth_city, mother_name, father_name, cnh, education, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """, tuple(record.values()))
                 row = db.execute("SELECT * FROM unit_personnel WHERE id=?", (cur.lastrowid,)).fetchone()
             self._json(201, {"person": self._unit_record(row)})
@@ -720,6 +775,34 @@ class SigaseHandler(SimpleHTTPRequestHandler):
 
     def do_PUT(self):
         path = urlparse(self.path).path
+        if path.startswith("/api/tasks/"):
+            current = self._current_user_record()
+            if not current:
+                self._require_user()
+                return
+            try:
+                task_id = int(path.rsplit("/", 1)[1])
+            except ValueError:
+                self._json(400, {"error": "Identificador da tarefa inválido."})
+                return
+            status = self._body().get("status")
+            if status not in ("Em andamento", "Concluída"):
+                self._json(400, {"error": "Status de tarefa inválido."})
+                return
+            with connect_db() as db:
+                task = db.execute("SELECT * FROM tasks WHERE id=? AND assignee_id=?", (task_id, current["id"])).fetchone()
+                if not task:
+                    self._json(404, {"error": "Tarefa não encontrada para este usuário."})
+                    return
+                events = json.loads(task["events_json"] or "[]")
+                if task["status"] == "Concluída":
+                    self._json(400, {"error": "Esta tarefa já foi concluída."})
+                    return
+                now = datetime.now(timezone.utc).isoformat()
+                events.append(["Iniciada" if status == "Em andamento" else "Concluída", current["display_name"], now])
+                db.execute("UPDATE tasks SET status=?,events_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (status, json.dumps(events, ensure_ascii=False), task_id))
+            self._json(200, {"ok": True})
+            return
         if path.startswith("/api/users/"):
             if not self._require_admin():
                 return
@@ -786,7 +869,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 return
             with connect_db() as db:
                 cur = db.execute("""
-                    UPDATE unit_personnel SET full_name=?, war_name=?, birth_date=?, rank=?, qm=?, section=?, address=?, cpf=?, military_id=?, additional_data=?, updated_at=CURRENT_TIMESTAMP
+                    UPDATE unit_personnel SET full_name=?, war_name=?, birth_date=?, rank=?, qm=?, section=?, address=?, cpf=?, military_id=?, additional_data=?, civil_id=?, prec_cp=?, blood_type=?, email=?, religion=?, phone=?, birth_city=?, mother_name=?, father_name=?, cnh=?, education=?, updated_at=CURRENT_TIMESTAMP
                     WHERE id=?
                 """, (*record.values(), person_id))
                 row = db.execute("SELECT * FROM unit_personnel WHERE id=?", (person_id,)).fetchone()
@@ -893,6 +976,21 @@ class SigaseHandler(SimpleHTTPRequestHandler):
 
     def do_DELETE(self):
         path = urlparse(self.path).path
+        if path.startswith("/api/tasks/"):
+            if not self._require_admin():
+                return
+            try:
+                task_id = int(path.rsplit("/", 1)[1])
+            except ValueError:
+                self._json(400, {"error": "Identificador da tarefa inválido."})
+                return
+            with connect_db() as db:
+                cur = db.execute("DELETE FROM tasks WHERE id=?", (task_id,))
+            if not cur.rowcount:
+                self._json(404, {"error": "Tarefa não encontrada."})
+                return
+            self._json(200, {"ok": True})
+            return
         if path.startswith("/api/force-maps/"):
             if not self._require_document_editor():
                 return
@@ -1153,6 +1251,17 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             "address": ("Endereço", 240),
             "cpf": ("CPF", 20),
             "military_id": ("Identidade militar", 40),
+            "civil_id": ("Identidade civil", 40),
+            "prec_cp": ("Prec-CP", 40),
+            "blood_type": ("Tipo sanguíneo", 10),
+            "email": ("E-mail", 160),
+            "religion": ("Religião", 80),
+            "phone": ("Telefone", 30),
+            "birth_city": ("Cidade natal", 100),
+            "mother_name": ("Filiação materna", 120),
+            "father_name": ("Filiação paterna", 120),
+            "cnh": ("CNH", 30),
+            "education": ("Escolaridade", 100),
             "additional_data": ("Dados adicionais", 1000),
         }
         cleaned = {}
@@ -1161,43 +1270,43 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             if not isinstance(value, str):
                 return {}, f"O campo {label.lower()} é inválido."
             value = value.strip()
-            if key != "additional_data" and not value:
+            if key in ("full_name", "war_name") and not value:
                 return {}, f"Preencha o campo {label.lower()}."
             if len(value) > max_length:
                 return {}, f"O campo {label.lower()} excede o limite de {max_length} caracteres."
             cleaned[key] = value
-        if cleaned["rank"] not in UNIT_RANKS:
+        if cleaned["rank"] and cleaned["rank"] not in UNIT_RANKS:
             return {}, "Selecione um posto/graduação da lista de antiguidade."
         birth_date = data.get("birth_date")
-        try:
-            parsed_date = date.fromisoformat(birth_date) if isinstance(birth_date, str) else None
-        except ValueError:
-            parsed_date = None
-        if parsed_date is None or parsed_date > date.today():
-            return {}, "Informe uma data de nascimento válida, que não seja futura."
-        cleaned["birth_date"] = parsed_date.isoformat()
-        if cleaned["cpf"] != "000.000.000-00" and not (len(cleaned["cpf"]) in (11, 14)):
+        if birth_date:
+            try:
+                parsed_date = date.fromisoformat(birth_date) if isinstance(birth_date, str) else None
+            except ValueError:
+                parsed_date = None
+            if parsed_date is None or parsed_date > date.today():
+                return {}, "Informe uma data de nascimento válida, que não seja futura."
+            cleaned["birth_date"] = parsed_date.isoformat()
+        else:
+            cleaned["birth_date"] = ""
+        if cleaned["cpf"] and cleaned["cpf"] != "000.000.000-00" and len(cleaned["cpf"]) not in (11, 14):
             return {}, "Informe um CPF válido no formato 000.000.000-00."
-        ordered = {
-            "full_name": cleaned["full_name"],
-            "war_name": cleaned["war_name"],
-            "birth_date": cleaned["birth_date"],
-            "rank": cleaned["rank"],
-            "qm": cleaned["qm"],
-            "section": cleaned["section"],
-            "address": cleaned["address"],
-            "cpf": cleaned["cpf"],
-            "military_id": cleaned["military_id"],
-            "additional_data": cleaned["additional_data"],
-        }
+        ordered = {key: cleaned[key] for key in (
+            "full_name", "war_name", "birth_date", "rank", "qm", "section", "address", "cpf", "military_id", "additional_data",
+            "civil_id", "prec_cp", "blood_type", "email", "religion", "phone", "birth_city", "mother_name", "father_name", "cnh", "education",
+        )}
         return ordered, None
 
     @staticmethod
     def _unit_record(row: sqlite3.Row) -> dict:
         result = dict(row)
-        born = date.fromisoformat(result["birth_date"])
-        now = date.today()
-        result["age"] = now.year - born.year - ((now.month, now.day) < (born.month, born.day))
+        try:
+            born = date.fromisoformat(result.get("birth_date") or "")
+            now = date.today()
+            result["age"] = now.year - born.year - ((now.month, now.day) < (born.month, born.day))
+        except ValueError:
+            result["age"] = None
+        for field in ("civil_id", "prec_cp", "blood_type", "email", "religion", "phone", "birth_city", "mother_name", "father_name", "cnh", "education"):
+            result.setdefault(field, "")
         return result
 
     @staticmethod
@@ -1272,6 +1381,16 @@ class SigaseHandler(SimpleHTTPRequestHandler):
     def _document_record(row: sqlite3.Row) -> dict:
         record = dict(row)
         record["data"] = json.loads(record.pop("data_json"))
+        return record
+
+    @staticmethod
+    def _task_record(row: sqlite3.Row) -> dict:
+        record = dict(row)
+        record["id"] = str(record["id"])
+        record["due"] = record.pop("due_date")
+        record["created"] = record.pop("created_at")
+        record.pop("updated_at", None)
+        record["events"] = json.loads(record.pop("events_json") or "[]")
         return record
 
     def _notice_payload(self, row: sqlite3.Row, current_user: sqlite3.Row) -> dict:

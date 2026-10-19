@@ -9,7 +9,7 @@ Aplicação executada localmente, com dados cadastrais e registros do sistema ar
 3. Em **Connect**, copie a connection string do **Session pooler** (recomendado para computadores sem IPv6). Use a opção com SSL.
 4. Copie `.env.example` para `.env` e substitua `SUPABASE_DATABASE_URL` pela connection string completa. Não compartilhe o arquivo `.env` nem o envie ao GitHub.
 
-O schema cria as tabelas e índices do sistema. RLS fica habilitado e os papéis `anon` e `authenticated` não recebem acesso às tabelas; o SIGASE acessa o banco pelo servidor local. O servidor insere o usuário inicial **Administrador** (login `0000`, senha `0000`) apenas se a tabela de usuários estiver vazia. Altere a senha inicial antes de cadastrar informações reais.
+O schema cria as tabelas e índices do sistema, incluindo a tabela `tasks` para sincronização de tarefas entre usuários e dispositivos e os campos ampliados do efetivo da unidade. Após atualizar o projeto, execute novamente o conteúdo atualizado de `supabase/schema.sql` no SQL Editor para criar a tabela de tarefas no projeto Supabase existente. RLS fica habilitado e os papéis `anon` e `authenticated` não recebem acesso às tabelas; o SIGASE acessa o banco pelo servidor local. O servidor insere o usuário inicial **Administrador** (login `0000`, senha `0000`) apenas se a tabela de usuários estiver vazia. Altere a senha inicial antes de cadastrar informações reais.
 
 ## Executar localmente
 
@@ -39,6 +39,6 @@ Abra `http://127.0.0.1:8000`. O servidor escuta apenas em `127.0.0.1`; `SIGASE_P
 
 O SIGASE mantém a interface e o servidor no computador local, mas os registros do banco ficam hospedados no Supabase e dependem de conexão com a internet. A connection string contém uma credencial privilegiada de banco: mantenha-a somente no `.env` local, que está ignorado pelo Git. Não use a senha ou credencial privilegiada do Supabase no JavaScript do navegador.
 
-As tarefas e notificações de conclusão de tarefas ainda são mantidas no armazenamento local de cada navegador; não são sincronizadas entre computadores. Os demais registros acessados pela API usam Supabase. O projeto não migra automaticamente registros de um SQLite antigo. Esta configuração inicial cria o schema e semeia apenas as categorias e o administrador quando necessário.
+As tarefas são armazenadas no PostgreSQL do Supabase e aparecem para o solicitante e para o responsável em dispositivos diferentes. O histórico de atualizações também é compartilhado. As notificações de conclusão legadas do protótipo podem permanecer apenas no armazenamento local do navegador. O projeto não migra automaticamente registros de um SQLite antigo. Esta configuração inicial cria o schema e semeia apenas as categorias e o administrador quando necessário.
 
 Antes de usar dados pessoais, ajuste a senha padrão, configure cópias de segurança e valide os controles de acesso e as regras aplicáveis à organização. Não há integração com Google Drive nem envio de arquivos para o Supabase.
