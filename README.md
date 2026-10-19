@@ -1,42 +1,42 @@
-# SIGASE 1.0
+# SIGASE
 
-Sistema Integrado de Gestão Administrativa da Sargenteação. Aplicação local com interface em HTML, CSS e JavaScript, servidor Python e banco de dados SQLite.
+Aplicação executada localmente, com dados cadastrais e registros do sistema armazenados em um banco PostgreSQL no Supabase. O navegador conversa somente com o servidor Python local; a connection string do banco fica no backend e não é enviada ao navegador.
 
-## Acesso inicial
+## Configuração do Supabase
 
-- Endereço: `http://127.0.0.1:8000`
-- Login: `0000`
-- Senha: `0000`
+1. Crie um projeto Supabase dedicado ao SIGASE.
+2. No painel do projeto, abra **SQL Editor**, cole o conteúdo de `supabase/schema.sql` e execute uma vez.
+3. Em **Connect**, copie a connection string do **Session pooler** (recomendado para computadores sem IPv6). Use a opção com SSL.
+4. Copie `.env.example` para `.env` e substitua `SUPABASE_DATABASE_URL` pela connection string completa. Não compartilhe o arquivo `.env` nem o envie ao GitHub.
 
-O administrador pode cadastrar usuários, definir credenciais, permissões e funções na página **Equipe e permissões**.
+O schema cria as tabelas e índices do sistema. RLS fica habilitado e os papéis `anon` e `authenticated` não recebem acesso às tabelas; o SIGASE acessa o banco pelo servidor local. O servidor insere o usuário inicial **Administrador** (login `0000`, senha `0000`) apenas se a tabela de usuários estiver vazia. Altere a senha inicial antes de cadastrar informações reais.
 
-## Executar
+## Executar localmente
 
-1. Instale Python 3.10 ou mais recente.
-2. Abra um terminal na pasta do projeto e execute `python server.py`.
-3. Acesse o endereço local acima. O servidor aceita conexões apenas neste computador.
+Requisitos: Python 3.10 ou mais recente.
 
-O arquivo `sigase.sqlite3` é criado automaticamente ao iniciar o sistema. Não há conexão com serviços externos.
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+# Edite .env e configure SUPABASE_DATABASE_URL antes de iniciar
+python server.py
+```
+
+Abra `http://127.0.0.1:8000`. O servidor escuta apenas em `127.0.0.1`; `SIGASE_PORT` pode alterar a porta.
 
 ## Funcionalidades
 
 - Visão geral, tarefas, caixa de entrada e histórico de atualizações.
-- Equipe e permissões: somente visualização, editor de documentos e administrador.
-- Efetivo da unidade, pesquisa e ficha individual.
-- Avisos direcionados a usuários selecionados, com confirmação individual.
-- Aditamentos, pernoites e FATDs, organizados por ano e mês, com prévia, edição e impressão.
-- Mapa da Força ligado ao efetivo e pronto para impressão.
-- Plano de Férias com parcelas, calendário e avisos automáticos.
-- Escalas de serviço em grade mensal, com contagem de folgas e relatório de próximos serviços.
+- Equipe e permissões: visualizador, editor e administrador.
+- Efetivo, avisos, documentos, mapa da força, plano de férias e escalas de serviço.
+- Registros da API armazenados no PostgreSQL do Supabase.
 
-Os registros do SQLite são compartilhados entre navegadores que acessam este servidor no mesmo computador. Tarefas e notificações de tarefas ficam no armazenamento local de cada navegador.
+## Dados e limitações
 
-## Banco e cópias
+O SIGASE mantém a interface e o servidor no computador local, mas os registros do banco ficam hospedados no Supabase e dependem de conexão com a internet. A connection string contém uma credencial privilegiada de banco: mantenha-a somente no `.env` local, que está ignorado pelo Git. Não use a senha ou credencial privilegiada do Supabase no JavaScript do navegador.
 
-O banco atual foi iniciado sem registros de pessoal, escalas, documentos, férias ou avisos. Para fazer uma cópia, encerre o servidor e copie `sigase.sqlite3` para um local protegido. O `.gitignore` exclui o banco, cópias e arquivos temporários do versionamento.
+As tarefas e notificações de conclusão de tarefas ainda são mantidas no armazenamento local de cada navegador; não são sincronizadas entre computadores. Os demais registros acessados pela API usam Supabase. O projeto não migra automaticamente registros de um SQLite antigo. Esta configuração inicial cria o schema e semeia apenas as categorias e o administrador quando necessário.
 
-## Segurança e limites
-
-Esta instalação é local e não deve ser exposta à rede ou à internet. A senha inicial `0000` é simples e precisa ser trocada antes de inserir informações pessoais. As senhas são armazenadas com hash, mas o arquivo SQLite não é criptografado e não há cópias automáticas, recuperação de conta, auditoria abrangente ou controles de segurança apropriados para implantação operacional. Revise as regras e controles da organização antes de inserir dados pessoais ou documentos sensíveis.
-
-O SIGASE não se conecta ao Google Drive, não importa arquivos e não configura domínio.
+Antes de usar dados pessoais, ajuste a senha padrão, configure cópias de segurança e valide os controles de acesso e as regras aplicáveis à organização. Não há integração com Google Drive nem envio de arquivos para o Supabase.

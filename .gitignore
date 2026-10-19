@@ -1,4 +1,4 @@
-# SIGASE local database and backups
+# Local configuration, secrets, and legacy database files
 sigase.sqlite3
 sigase.sqlite3-*
 *.sqlite

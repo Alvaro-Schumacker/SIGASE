@@ -1,9 +1,11 @@
-"""Local SIGASE server with a SQLite database."""
+"""Local SIGASE server backed by Supabase Postgres."""
 from __future__ import annotations
 
 import json
 import hashlib
 import hmac
+import os
+import re
 import secrets
 import sqlite3
 import unicodedata
@@ -14,9 +16,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "sigase.sqlite3"
 UNIT_RANKS = ("Cap", "1º Ten", "2º Ten", "STen", "1º Sgt", "2º Sgt", "3º Sgt", "Cb EP", "Sd EP", "Sd EV")
 PASSWORD_ITERATIONS = 180_000
+ID_TABLES = {"app_users", "task_categories", "personnel", "unit_personnel", "documents", "force_maps", "vacation_plan", "duty_scales", "notices"}
 
 
 def _password_hash(password: str, salt: bytes | None = None) -> str:
@@ -57,190 +59,126 @@ def _canonical_unit_rank(value: str) -> str | None:
     return aliases.get(key)
 
 
-def connect_db() -> sqlite3.Connection:
-    db = sqlite3.connect(DB_PATH)
-    db.row_factory = sqlite3.Row
-    db.execute("PRAGMA foreign_keys = ON")
-    return db
+def _load_env_file() -> None:
+    env_path = BASE_DIR / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        value = value.strip().strip('"').strip("'")
+        os.environ.setdefault(key.strip(), value)
+
+
+def _postgres_sql(sql: str) -> str:
+    sql = re.sub(r"\s+COLLATE\s+NOCASE\b", "", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"datetime\('now'\s*,\s*'\+30 days'\)", "(CURRENT_TIMESTAMP + INTERVAL '30 days')", sql, flags=re.IGNORECASE)
+    return sql.replace("?", "%s")
+
+
+def _clean_row(row):
+    if row is None:
+        return None
+    return {key: (value.isoformat(sep=" ") if hasattr(value, "isoformat") and value.__class__.__name__ == "datetime" else value) for key, value in row.items()}
+
+
+class PostgresCursor:
+    def __init__(self, cursor, lastrowid=None):
+        self._cursor = cursor
+        self.lastrowid = lastrowid
+
+    @property
+    def rowcount(self):
+        return self._cursor.rowcount
+
+    def fetchone(self):
+        return _clean_row(self._cursor.fetchone())
+
+    def fetchall(self):
+        return [_clean_row(row) for row in self._cursor.fetchall()]
+
+
+class PostgresConnection:
+    def __init__(self, connection, psycopg_module):
+        self._connection = connection
+        self._psycopg = psycopg_module
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        try:
+            if exc_type:
+                self._connection.rollback()
+            else:
+                self._connection.commit()
+        finally:
+            self._connection.close()
+        return False
+
+    def execute(self, sql: str, params=()):
+        sql = _postgres_sql(sql)
+        lastrowid = None
+        match = re.match(r"\s*INSERT\s+INTO\s+([a-z_]+)", sql, re.IGNORECASE)
+        if match and match.group(1).lower() in ID_TABLES and " RETURNING " not in sql.upper():
+            sql = sql.rstrip().rstrip(";") + " RETURNING id"
+            needs_id = True
+        else:
+            needs_id = False
+        try:
+            cursor = self._connection.execute(sql, params, prepare=False)
+            if needs_id:
+                inserted = cursor.fetchone()
+                lastrowid = inserted["id"] if inserted else None
+            return PostgresCursor(cursor, lastrowid)
+        except self._psycopg.IntegrityError as error:
+            raise sqlite3.IntegrityError(str(error)) from error
+        except self._psycopg.Error as error:
+            raise sqlite3.DatabaseError(str(error)) from error
+
+    def executemany(self, sql: str, params):
+        try:
+            return PostgresCursor(self._connection.cursor().executemany(_postgres_sql(sql), params))
+        except self._psycopg.IntegrityError as error:
+            raise sqlite3.IntegrityError(str(error)) from error
+        except self._psycopg.Error as error:
+            raise sqlite3.DatabaseError(str(error)) from error
+
+
+def connect_db() -> PostgresConnection:
+    _load_env_file()
+    database_url = os.environ.get("SUPABASE_DATABASE_URL", "").strip()
+    if not database_url:
+        raise sqlite3.DatabaseError("Configure SUPABASE_DATABASE_URL no arquivo .env usando a string de conexão do Supabase.")
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+        connection = psycopg.connect(database_url, sslmode="require", prepare_threshold=None, row_factory=dict_row)
+        return PostgresConnection(connection, psycopg)
+    except ImportError as error:
+        raise sqlite3.DatabaseError("Dependência ausente. Instale com: python -m pip install -r requirements.txt") from error
+    except Exception as error:
+        if error.__class__.__module__.startswith("psycopg"):
+            raise sqlite3.DatabaseError(f"Falha ao conectar ao Supabase: {error}") from error
+        raise
 
 
 def initialize_db() -> None:
+    schema_path = BASE_DIR / "supabase" / "schema.sql"
+    if not schema_path.exists():
+        raise sqlite3.DatabaseError("Arquivo supabase/schema.sql não foi encontrado.")
     with connect_db() as db:
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS personnel (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                rank TEXT NOT NULL,
-                function TEXT NOT NULL,
-                section TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'Ativo',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS task_categories (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        db.executemany("INSERT OR IGNORE INTO task_categories (name) VALUES (?)", [(name,) for name in ("Férias", "Aditamentos", "Pernoites")])
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS app_users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                display_name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                login TEXT,
-                password_hash TEXT,
-                role TEXT NOT NULL CHECK(role IN ('viewer','editor','admin')),
-                functions_json TEXT NOT NULL DEFAULT '[]',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        user_columns = {row[1] for row in db.execute("PRAGMA table_info(app_users)").fetchall()}
-        if "login" not in user_columns:
-            db.execute("ALTER TABLE app_users ADD COLUMN login TEXT")
-        if "password_hash" not in user_columns:
-            db.execute("ALTER TABLE app_users ADD COLUMN password_hash TEXT")
-        if db.execute("SELECT COUNT(*) FROM app_users").fetchone()[0] == 0:
+        for statement in schema_path.read_text(encoding="utf-8").split(";"):
+            if statement.strip():
+                db.execute(statement)
+        db.executemany("INSERT INTO task_categories (name) VALUES (?) ON CONFLICT DO NOTHING", [(name,) for name in ("Férias", "Aditamentos", "Pernoites")])
+        if db.execute("SELECT COUNT(*) AS count FROM app_users").fetchone()["count"] == 0:
             db.execute(
                 "INSERT INTO app_users (display_name,login,password_hash,role,functions_json) VALUES (?,?,?,?,?)",
                 ("Administrador", "0000", _password_hash("0000"), "admin", "[]"),
             )
-        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_login ON app_users(login COLLATE NOCASE)")
-        db.execute("""CREATE TABLE IF NOT EXISTS user_sessions (
-            token_hash TEXT PRIMARY KEY,
-            user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
-            expires_at TEXT NOT NULL
-        )""")
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS unit_personnel (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                full_name TEXT NOT NULL,
-                war_name TEXT NOT NULL,
-                birth_date TEXT NOT NULL,
-                rank TEXT NOT NULL,
-                qm TEXT NOT NULL,
-                section TEXT NOT NULL,
-                address TEXT NOT NULL,
-                cpf TEXT NOT NULL,
-                military_id TEXT NOT NULL,
-                additional_data TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        for roster_row in db.execute("SELECT id,rank FROM unit_personnel").fetchall():
-            canonical_rank = _canonical_unit_rank(roster_row["rank"])
-            if canonical_rank and canonical_rank != roster_row["rank"]:
-                db.execute("UPDATE unit_personnel SET rank=? WHERE id=?", (canonical_rank, roster_row["id"]))
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS documents (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                kind TEXT NOT NULL CHECK(kind IN ('aditamento', 'pernoite', 'fatd')),
-                bulletin_number TEXT NOT NULL,
-                document_date TEXT NOT NULL,
-                data_json TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        schema = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='documents'").fetchone()[0]
-        if "'fatd'" not in schema:
-            db.execute("ALTER TABLE documents RENAME TO documents_legacy")
-            db.execute("""
-                CREATE TABLE documents (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    kind TEXT NOT NULL CHECK(kind IN ('aditamento', 'pernoite', 'fatd')),
-                    bulletin_number TEXT NOT NULL,
-                    document_date TEXT NOT NULL,
-                    data_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            db.execute("INSERT INTO documents SELECT * FROM documents_legacy")
-            db.execute("DROP TABLE documents_legacy")
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS force_maps (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                activity_date TEXT NOT NULL,
-                data_json TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS vacation_plan (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                person_id INTEGER NOT NULL REFERENCES unit_personnel(id),
-                start_date TEXT NOT NULL,
-                end_date TEXT NOT NULL,
-                travel_days INTEGER NOT NULL DEFAULT 0 CHECK(travel_days IN (0,1)),
-                vacation_days INTEGER NOT NULL,
-                presentation_date TEXT NOT NULL,
-                period_number INTEGER NOT NULL CHECK(period_number BETWEEN 1 AND 3),
-                period_total INTEGER NOT NULL CHECK(period_total BETWEEN 1 AND 3),
-                task_added INTEGER NOT NULL DEFAULT 0 CHECK(task_added IN (0,1)),
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS duty_scales (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                mode TEXT NOT NULL CHECK(mode IN ('corrida','preta_vermelha','completa')),
-                services_json TEXT NOT NULL,
-                participants_json TEXT NOT NULL,
-                assignments_json TEXT NOT NULL DEFAULT '{}',
-                red_dates_json TEXT NOT NULL DEFAULT '[]',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS notices (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                subject TEXT NOT NULL,
-                notice_date TEXT NOT NULL,
-                created_by TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS notice_recipients (
-                notice_id INTEGER NOT NULL REFERENCES notices(id) ON DELETE CASCADE,
-                user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
-                acknowledged_at TEXT,
-                PRIMARY KEY (notice_id, user_id)
-            )
-        """)
-        notice_columns = {row[1] for row in db.execute("PRAGMA table_info(notices)").fetchall()}
-        if "category" not in notice_columns:
-            db.execute("ALTER TABLE notices ADD COLUMN category TEXT NOT NULL DEFAULT 'geral'")
-        if "source_type" not in notice_columns:
-            db.execute("ALTER TABLE notices ADD COLUMN source_type TEXT")
-        if "source_id" not in notice_columns:
-            db.execute("ALTER TABLE notices ADD COLUMN source_id INTEGER")
-
-        vacation_recipient_ids = set()
-        for user_row in db.execute("SELECT id, functions_json FROM app_users").fetchall():
-            try:
-                functions = json.loads(user_row["functions_json"])
-            except (TypeError, json.JSONDecodeError):
-                functions = []
-            if any(_normalize_function(str(function)) == "ferias" for function in functions):
-                vacation_recipient_ids.add(user_row["id"])
-        auto_notice_ids = [row[0] for row in db.execute("SELECT id FROM notices WHERE category='ferias' AND source_type='vacation'").fetchall()]
-        for notice_id in auto_notice_ids:
-            current_recipients = [row[0] for row in db.execute("SELECT user_id FROM notice_recipients WHERE notice_id=?", (notice_id,)).fetchall()]
-            for user_id in current_recipients:
-                if user_id not in vacation_recipient_ids:
-                    db.execute("DELETE FROM notice_recipients WHERE notice_id=? AND user_id=?", (notice_id, user_id))
-            db.executemany("INSERT OR IGNORE INTO notice_recipients (notice_id,user_id) VALUES (?,?)", [(notice_id, user_id) for user_id in vacation_recipient_ids])
 
 
 class SigaseHandler(SimpleHTTPRequestHandler):
@@ -341,7 +279,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                     db.execute("SELECT 1").fetchone()
                 self._json(200, {"ok": True, "service": "SIGASE local"})
             except sqlite3.Error:
-                self._json(503, {"ok": False, "error": "Banco local indisponível."})
+                self._json(503, {"ok": False, "error": "Banco Supabase indisponível. Verifique a conexão e o arquivo .env."})
             return
         if Path(path).name.startswith("sigase.sqlite3") or path.endswith(".db"):
             self._json(404, {"error": "Arquivo não encontrado."})
@@ -381,7 +319,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                               EXISTS(SELECT 1 FROM notice_recipients nr WHERE nr.notice_id=n.id AND nr.user_id=?) AS is_recipient,
                               (SELECT nr.acknowledged_at FROM notice_recipients nr WHERE nr.notice_id=n.id AND nr.user_id=?) AS acknowledged_at
                        FROM notices n
-                       WHERE n.created_by=? COLLATE NOCASE
+                       WHERE LOWER(n.created_by)=LOWER(?)
                           OR EXISTS(SELECT 1 FROM notice_recipients nr WHERE nr.notice_id=n.id AND nr.user_id=?)
                        ORDER BY n.notice_date DESC, n.id DESC""",
                     (current_user["id"], current_user["id"], current_user["display_name"], current_user["id"]),
@@ -450,7 +388,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 self._json(400, {"error": "Informe o login e a senha."})
                 return
             with connect_db() as db:
-                record = db.execute("SELECT * FROM app_users WHERE login=? COLLATE NOCASE", (login.strip(),)).fetchone()
+                record = db.execute("SELECT * FROM app_users WHERE LOWER(login)=LOWER(?)", (login.strip(),)).fetchone()
                 if not record or not _verify_password(password, record["password_hash"]):
                     self._json(401, {"error": "Login ou senha inválidos."})
                     return
@@ -500,7 +438,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 return
             with connect_db() as db:
                 if body.get("all_users") is True:
-                    recipient_ids = [row[0] for row in db.execute("SELECT id FROM app_users").fetchall()]
+                    recipient_ids = [row["id"] for row in db.execute("SELECT id FROM app_users").fetchall()]
                 else:
                     raw_ids = body.get("recipient_ids")
                     if not isinstance(raw_ids, list) or not raw_ids:
@@ -511,7 +449,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                     except (TypeError, ValueError):
                         self._json(400, {"error": "A lista de destinatários é inválida."})
                         return
-                    valid_ids = {row[0] for row in db.execute(
+                    valid_ids = {row["id"] for row in db.execute(
                         f"SELECT id FROM app_users WHERE id IN ({','.join('?' for _ in recipient_ids)})", recipient_ids
                     ).fetchall()} if recipient_ids else set()
                     if len(valid_ids) != len(recipient_ids):
@@ -653,7 +591,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 self._json(400, {"error": error})
                 return
             with connect_db() as db:
-                roster_ids = {r[0] for r in db.execute("SELECT id FROM unit_personnel WHERE id IN (%s)" % ",".join("?" for _ in record["participants"]), record["participants"]).fetchall()} if record["participants"] else set()
+                roster_ids = {r["id"] for r in db.execute("SELECT id FROM unit_personnel WHERE id IN (%s)" % ",".join("?" for _ in record["participants"]), record["participants"]).fetchall()} if record["participants"] else set()
                 if roster_ids != set(record["participants"]):
                     self._json(400, {"error": "Selecione somente pessoas existentes no efetivo."})
                     return
@@ -769,7 +707,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 return
             with connect_db() as db:
                 target = db.execute("SELECT role FROM app_users WHERE id=?", (user_id,)).fetchone()
-                admins = db.execute("SELECT COUNT(*) FROM app_users WHERE role='admin'").fetchone()[0]
+                admins = db.execute("SELECT COUNT(*) AS count FROM app_users WHERE role='admin'").fetchone()["count"]
                 if not target:
                     self._json(404, {"error": "Usuário não encontrado."})
                     return
@@ -907,7 +845,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 self._json(400, {"error": error})
                 return
             with connect_db() as db:
-                ids = {r[0] for r in db.execute("SELECT id FROM unit_personnel WHERE id IN (%s)" % ",".join("?" for _ in record["participants"]), record["participants"]).fetchall()} if record["participants"] else set()
+                ids = {r["id"] for r in db.execute("SELECT id FROM unit_personnel WHERE id IN (%s)" % ",".join("?" for _ in record["participants"]), record["participants"]).fetchall()} if record["participants"] else set()
                 if ids != set(record["participants"]):
                     self._json(400, {"error": "Selecione somente pessoas existentes no efetivo."})
                     return
@@ -1047,7 +985,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 if current and current["id"] == item_id:
                     self._json(400, {"error": "Não é possível excluir o usuário que está conectado."})
                     return
-                admins = db.execute("SELECT COUNT(*) FROM app_users WHERE role='admin'").fetchone()[0]
+                admins = db.execute("SELECT COUNT(*) AS count FROM app_users WHERE role='admin'").fetchone()["count"]
                 if target["role"] == "admin" and admins <= 1:
                     self._json(400, {"error": "O sistema precisa manter ao menos um administrador."})
                     return
@@ -1081,7 +1019,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             return {}, "Selecione funções/classificações válidas."
         functions = list(dict.fromkeys(item.strip() for item in functions if item.strip()))
         with connect_db() as db:
-            categories = {row[0] for row in db.execute("SELECT name FROM task_categories").fetchall()}
+            categories = {row["name"] for row in db.execute("SELECT name FROM task_categories").fetchall()}
         if not set(functions).issubset(categories):
             return {}, "Uma das funções selecionadas não existe mais. Atualize a página."
         return {"display_name": display_name.strip(), "login": login.strip(), "password": password, "role": role, "functions": functions}, None
@@ -1360,8 +1298,8 @@ class SigaseHandler(SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     import os
 
-    port = int(os.environ.get("PORT", os.environ.get("SIGASE_PORT", "8000")))
-    host = "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1"
+    port = int(os.environ.get("SIGASE_PORT", "8000"))
+    host = "127.0.0.1"
 
     initialize_db()
 
