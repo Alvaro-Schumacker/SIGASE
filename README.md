@@ -1,4 +1,4 @@
-# SIGASE
+# SIGASE 1.0.2
 
 Aplicação executada localmente, com dados cadastrais e registros do sistema armazenados em um banco PostgreSQL no Supabase. O navegador conversa somente com o servidor Python local; a connection string do banco fica no backend e não é enviada ao navegador.
 
@@ -24,13 +24,15 @@ Copy-Item .env.example .env
 python server.py
 ```
 
-Abra `http://127.0.0.1:8000`. O servidor escuta apenas em `127.0.0.1`; `SIGASE_PORT` pode alterar a porta.
+Abra `http://127.0.0.1:8000`. O servidor escuta apenas em `127.0.0.1`; `SIGASE_PORT` pode alterar a porta. Após entrar, a sessão permanece válida por uma hora e sobrevive à atualização da página. Use o botão de saída para encerrar a sessão imediatamente.
 
 ## Funcionalidades
 
 - Visão geral, tarefas, caixa de entrada e histórico de atualizações.
 - Equipe e permissões: visualizador, editor e administrador.
-- Efetivo, avisos, documentos, mapa da força, plano de férias e escalas de serviço.
+- Efetivo, avisos, documentos, mapa da força e plano de férias.
+- Escalas de serviço mensais com ordem definida dos participantes, contagem de folgas e relatório dos próximos serviços.
+- Indicador visual durante operações de rede mais demoradas.
 - Registros da API armazenados no PostgreSQL do Supabase.
 
 ## Dados e limitações

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#263b2d"><title>SIGASE | Gestão administrativa</title>
-  <style>.hidden{display:none!important}</style><link rel="stylesheet" href="/styles.css?v=20261016-10">
+  <style>.hidden{display:none!important}</style><link rel="stylesheet" href="/styles.css?v=20261019-16">
 </head>
 <body>
   <main id="login" class="login-screen">
@@ -44,6 +44,7 @@
         <div class="notice-dashboard-panel"><div class="section-head"><div><h2>Avisos</h2><p class="muted">Avisos próximos e lembretes direcionados a você</p></div><button class="text-button" data-view-link="notices">Ver todos <span>→</span></button></div><div id="dashboard-notices" class="notice-list"></div></div>
         <div class="section-head"><div><h2>Atividade recente</h2><p class="muted">Atualizações mais recentes das tarefas</p></div><button class="text-button" id="all-tasks">Ver todas <span>→</span></button></div>
         <div id="recent-list" class="task-list"></div>
+        <footer class="app-footer"><span>Criado por Álvaro</span><span>Versão 1.0.2</span></footer>
       </section>
       <section id="inbox-view" class="page-view hidden">
         <div class="page-heading"><div><p class="eyebrow">DEMANDAS DA EQUIPE</p><h1>Caixa de entrada</h1><p class="muted">Organize, acompanhe e conclua as tarefas da seção.</p></div><button id="create-inbox" class="button primary">＋ Nova tarefa</button></div>
@@ -89,7 +90,7 @@
         <div id="scale-list" class="scale-list"></div>
         <section id="scale-board" class="scale-board hidden">
           <div class="scale-board-head"><div><p class="eyebrow" id="scale-kind-label"></p><h2 id="scale-board-title"></h2><p id="scale-board-meta" class="muted"></p></div><div class="scale-board-tools"><button id="edit-scale" class="button secondary hidden">Editar configuração</button><button id="scale-month-prev" class="button secondary" aria-label="Mês anterior">‹</button><strong id="scale-month"></strong><button id="scale-month-next" class="button secondary" aria-label="Próximo mês">›</button><button id="scale-month-today" class="button secondary">Hoje</button></div></div>
-          <div class="scale-legend"><span class="legend-black">Preta / dia comum</span><span class="legend-red">Vermelha</span><span class="legend-purple">Roxa · sexta</span><span>Clique na célula para indicar serviço ou folga.</span></div>
+          <div class="scale-legend"><span class="legend-black">Preta / dia comum</span><span class="legend-red">Vermelha</span><span class="legend-purple">Roxa · sexta</span><span class="legend-excluded">Fora da escala</span><span>Clique na célula para indicar serviço, folga ou afastamento temporário.</span></div>
           <div class="next-service-report"><div class="next-service-heading"><div><p class="eyebrow">RELATÓRIO DE SERVIÇO</p><h3>Próximos dias</h3><p id="next-service-caption" class="muted"></p></div><span class="report-tag">Atualizado pela escala</span></div><div id="next-service-dates" class="next-service-dates"></div></div>
           <div id="scale-schedule" class="scale-schedule"></div>
         </section>
@@ -97,6 +98,7 @@
     </main>
   </div>
   <div id="modal-layer" class="modal-layer hidden"><section id="modal" class="modal" role="dialog" aria-modal="true"></section></div>
+  <div id="network-loading" class="network-loading hidden" role="status" aria-live="polite"><div class="network-loading-card"><span class="loading-spinner" aria-hidden="true"></span><strong>Sincronizando…</strong></div></div>
   <div id="toast" class="toast"></div>
-  <script src="/app.js?v=20261016-12"></script>
+  <script src="/app.js?v=20261019-16"></script>
 </body></html>

@@ -74,7 +74,7 @@ def _load_env_file() -> None:
 
 def _postgres_sql(sql: str) -> str:
     sql = re.sub(r"\s+COLLATE\s+NOCASE\b", "", sql, flags=re.IGNORECASE)
-    sql = re.sub(r"datetime\('now'\s*,\s*'\+30 days'\)", "(CURRENT_TIMESTAMP + INTERVAL '30 days')", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"datetime\('now'\s*,\s*'\+1 hour'\)", "(CURRENT_TIMESTAMP + INTERVAL '1 hour')", sql, flags=re.IGNORECASE)
     return sql.replace("?", "%s")
 
 
@@ -394,11 +394,11 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                     return
                 token = secrets.token_urlsafe(32)
                 token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-                db.execute("INSERT INTO user_sessions (token_hash,user_id,expires_at) VALUES (?,?,datetime('now','+30 days'))", (token_hash, record["id"]))
+                db.execute("INSERT INTO user_sessions (token_hash,user_id,expires_at) VALUES (?,?,datetime('now','+1 hour'))", (token_hash, record["id"]))
             if not record:
                 self._json(401, {"error": "Login ou senha inválidos."})
                 return
-            self._json(200, self._user_payload(record), {"Set-Cookie": f"sigase_session={token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict"})
+            self._json(200, self._user_payload(record), {"Set-Cookie": f"sigase_session={token}; Path=/; Max-Age=3600; HttpOnly; SameSite=Strict"})
             return
         if path == "/api/logout":
             cookie = SimpleCookie()
@@ -619,6 +619,27 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             if service is not None and (not isinstance(service, str) or len(service) > 40):
                 self._json(400, {"error": "Serviço inválido."})
                 return
+            status = body.get("status", "service" if service else "off")
+            excluded_days = body.get("excluded_days", 1)
+            reason = body.get("reason", "")
+            if status not in ("off", "service", "excluded"):
+                self._json(400, {"error": "Selecione uma situação válida para a célula."})
+                return
+            if status == "service" and (not service or not service.strip()):
+                self._json(400, {"error": "Selecione um serviço cadastrado."})
+                return
+            if status == "excluded":
+                try:
+                    excluded_days = int(excluded_days)
+                except (TypeError, ValueError):
+                    self._json(400, {"error": "Informe a quantidade de dias fora da escala."})
+                    return
+                if not 1 <= excluded_days <= 366:
+                    self._json(400, {"error": "A quantidade de dias fora da escala deve ser entre 1 e 366."})
+                    return
+                if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 120:
+                    self._json(400, {"error": "Informe o motivo (até 120 caracteres)."})
+                    return
             with connect_db() as db:
                 row = db.execute("SELECT * FROM duty_scales WHERE id=?", (scale_id,)).fetchone()
                 if not row or person_id not in json.loads(row["participants_json"]):
@@ -626,7 +647,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                     return
                 assignments = json.loads(row["assignments_json"])
                 key = f"{person_id}|{cell_date}"
-                if service:
+                if status == "service" and service:
                     service_config = {item["name"]: item["daily_slots"] for item in json.loads(row["services_json"])}
                     if service not in service_config:
                         self._json(400, {"error": "Serviço não cadastrado nesta escala."})
@@ -636,6 +657,12 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                         self._json(400, {"error": f"As {service_config[service]} vaga(s) de {service} para este dia já foram preenchidas."})
                         return
                     assignments[key] = service
+                elif status == "excluded":
+                    marker = "__FORA_ESCALA__::" + reason.strip()
+                    start_date = date.fromisoformat(cell_date)
+                    for offset in range(excluded_days):
+                        excluded_date = (start_date.fromordinal(start_date.toordinal() + offset)).isoformat()
+                        assignments[f"{person_id}|{excluded_date}"] = marker
                 else:
                     assignments.pop(key, None)
                 db.execute("UPDATE duty_scales SET assignments_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (json.dumps(assignments, ensure_ascii=False), scale_id))
@@ -853,7 +880,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 valid_services = {item["name"] for item in record["services"]}
                 valid_people = set(record["participants"])
                 assignments = json.loads(existing["assignments_json"]) if existing else {}
-                assignments = {key: value for key, value in assignments.items() if int(key.split("|", 1)[0]) in valid_people and value in valid_services}
+                assignments = {key: value for key, value in assignments.items() if int(key.split("|", 1)[0]) in valid_people and (value in valid_services or (isinstance(value, str) and value.startswith("__FORA_ESCALA__::")))}
                 cur = db.execute("UPDATE duty_scales SET name=?,mode=?,services_json=?,participants_json=?,assignments_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (record["name"], record["mode"], json.dumps(record["services"], ensure_ascii=False), json.dumps(record["participants"]), json.dumps(assignments, ensure_ascii=False), scale_id))
                 row = db.execute("SELECT * FROM duty_scales WHERE id=?", (scale_id,)).fetchone()
                 roster = {r["id"]: dict(r) for r in db.execute("SELECT id, full_name, war_name, rank FROM unit_personnel").fetchall()}
