@@ -1295,11 +1295,13 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             db.executemany("INSERT INTO notice_recipients (notice_id,user_id) VALUES (?,?)", [(cur.lastrowid, uid) for uid in recipients])
 
 
+
 if __name__ == "__main__":
     import os
 
-    port = int(os.environ.get("SIGASE_PORT", "8000"))
-    host = "127.0.0.1"
+    is_render = "PORT" in os.environ
+    port = int(os.environ.get("PORT", os.environ.get("SIGASE_PORT", "8000")))
+    host = "0.0.0.0" if is_render else "127.0.0.1"
 
     initialize_db()
 
