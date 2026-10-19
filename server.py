@@ -1360,17 +1360,15 @@ class SigaseHandler(SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     import os
 
-    port = int(os.environ.get("SIGASE_PORT", "8000"))
+    port = int(os.environ.get("PORT", os.environ.get("SIGASE_PORT", "8000")))
+    host = "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1"
+
     initialize_db()
-    try:
-        server = ThreadingHTTPServer(("127.0.0.1", port), SigaseHandler)
-    except OSError as error:
-        if getattr(error, "winerror", None) == 10048 or getattr(error, "errno", None) in (48, 98, 10048):
-            print(f"A porta {port} já está em uso. Feche a outra janela do SIGASE ou inicie com SIGASE_PORT=8001.")
-        else:
-            print(f"Não foi possível iniciar o SIGASE em 127.0.0.1:{port}: {error}")
-        raise SystemExit(1)
-    print(f"SIGASE disponível em http://127.0.0.1:{port} (somente neste computador)", flush=True)
+
+    server = ThreadingHTTPServer((host, port), SigaseHandler)
+
+    print(f"SIGASE disponível em http://{host}:{port}", flush=True)
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
