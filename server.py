@@ -22,6 +22,7 @@ ID_TABLES = {"app_users", "task_categories", "tasks", "personnel", "unit_personn
 SCALE_SWAP_PREFIX = "__TROCA_SERVICO__::"
 SCALE_EXCLUDED_PREFIX = "__FORA_ESCALA__::"
 SCALE_REST_PREFIX = "__FOLGA_MANUAL__::"
+ANIMAL_PROFILE_ICONS = {"01_cervo.png", "02_cao.png", "03_coelho.png", "04_cabra.png", "05_lobo.png", "06_lebre.png", "07_touro.png"}
 
 
 def _scale_assignment_service(value):
@@ -314,6 +315,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
         return {
             "user": record["display_name"], "role": record["role"],
             "functions": json.loads(record["functions_json"]),
+            "avatar_icon": record["avatar_icon"],
             "canEditPersonnel": record["role"] == "admin",
             "canEditDocuments": record["role"] in ("admin", "editor"),
             "canManageUsers": record["role"] == "admin",
@@ -348,7 +350,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             if not self._require_user():
                 return
             with connect_db() as db:
-                rows = db.execute("SELECT id,display_name,login,role,functions_json,created_at,updated_at FROM app_users ORDER BY display_name COLLATE NOCASE").fetchall()
+                rows = db.execute("SELECT id,display_name,login,role,functions_json,avatar_icon,created_at,updated_at FROM app_users ORDER BY display_name COLLATE NOCASE").fetchall()
             self._json(200, {"users": [self._user_record(row) for row in rows]})
             return
         if path == "/api/task-categories":
@@ -597,8 +599,8 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 return
             try:
                 with connect_db() as db:
-                    cur = db.execute("INSERT INTO app_users (display_name,login,password_hash,role,functions_json,updated_at) VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)", (record["display_name"], record["login"], _password_hash(record["password"]), record["role"], json.dumps(record["functions"], ensure_ascii=False)))
-                    row = db.execute("SELECT id,display_name,login,role,functions_json,created_at,updated_at FROM app_users WHERE id=?", (cur.lastrowid,)).fetchone()
+                    cur = db.execute("INSERT INTO app_users (display_name,login,password_hash,role,functions_json,avatar_icon,updated_at) VALUES (?,?,?,?,?,?,CURRENT_TIMESTAMP)", (record["display_name"], record["login"], _password_hash(record["password"]), record["role"], json.dumps(record["functions"], ensure_ascii=False), record["avatar_icon"]))
+                    row = db.execute("SELECT id,display_name,login,role,functions_json,avatar_icon,created_at,updated_at FROM app_users WHERE id=?", (cur.lastrowid,)).fetchone()
             except sqlite3.IntegrityError:
                 self._json(400, {"error": "Já existe um usuário ou login com esses dados."})
                 return
@@ -695,7 +697,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 if not db.execute("SELECT 1 FROM unit_personnel WHERE id=?", (record["person_id"],)).fetchone():
                     self._json(400, {"error": "Selecione uma pessoa cadastrada no efetivo."})
                     return
-                cur = db.execute("INSERT INTO vacation_plan (person_id,start_date,end_date,travel_days,vacation_days,presentation_date,period_number,period_total,updated_at) VALUES (?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)", tuple(record.values()))
+                cur = db.execute("INSERT INTO vacation_plan (person_id,start_date,end_date,travel_days,vacation_days,presentation_date,period_number,period_total,reference_year,updated_at) VALUES (?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)", tuple(record.values()))
                 row = db.execute("SELECT v.*, p.full_name, p.rank FROM vacation_plan v JOIN unit_personnel p ON p.id=v.person_id WHERE v.id=?", (cur.lastrowid,)).fetchone()
                 self._sync_vacation_notices(db, row, created_by)
             self._json(201, {"period": dict(row)})
@@ -904,13 +906,13 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                     return
                 try:
                     if record["password"]:
-                        db.execute("UPDATE app_users SET display_name=?,login=?,password_hash=?,role=?,functions_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (record["display_name"], record["login"], _password_hash(record["password"]), record["role"], json.dumps(record["functions"], ensure_ascii=False), user_id))
+                        db.execute("UPDATE app_users SET display_name=?,login=?,password_hash=?,role=?,functions_json=?,avatar_icon=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (record["display_name"], record["login"], _password_hash(record["password"]), record["role"], json.dumps(record["functions"], ensure_ascii=False), record["avatar_icon"], user_id))
                     else:
-                        db.execute("UPDATE app_users SET display_name=?,login=?,role=?,functions_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (record["display_name"], record["login"], record["role"], json.dumps(record["functions"], ensure_ascii=False), user_id))
+                        db.execute("UPDATE app_users SET display_name=?,login=?,role=?,functions_json=?,avatar_icon=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (record["display_name"], record["login"], record["role"], json.dumps(record["functions"], ensure_ascii=False), record["avatar_icon"], user_id))
                 except sqlite3.IntegrityError:
                     self._json(400, {"error": "Já existe um usuário ou login com esses dados."})
                     return
-                row = db.execute("SELECT id,display_name,login,role,functions_json,created_at,updated_at FROM app_users WHERE id=?", (user_id,)).fetchone()
+                row = db.execute("SELECT id,display_name,login,role,functions_json,avatar_icon,created_at,updated_at FROM app_users WHERE id=?", (user_id,)).fetchone()
             self._json(200, {"user": self._user_record(row)})
             return
         if path.startswith("/api/personnel/"):
@@ -1027,7 +1029,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 if not exists or not person:
                     self._json(404, {"error": "Período ou ficha do efetivo não encontrado."})
                     return
-                db.execute("UPDATE vacation_plan SET person_id=?,start_date=?,end_date=?,travel_days=?,vacation_days=?,presentation_date=?,period_number=?,period_total=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (*record.values(), vacation_id))
+                db.execute("UPDATE vacation_plan SET person_id=?,start_date=?,end_date=?,travel_days=?,vacation_days=?,presentation_date=?,period_number=?,period_total=?,reference_year=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (*record.values(), vacation_id))
                 row = db.execute("SELECT v.*, p.full_name, p.rank FROM vacation_plan v JOIN unit_personnel p ON p.id=v.person_id WHERE v.id=?", (vacation_id,)).fetchone()
                 self._sync_vacation_notices(db, row, updated_by)
             self._json(200, {"period": dict(row)})
@@ -1223,6 +1225,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
         password = data.get("password", "")
         role = data.get("role")
         functions = data.get("functions", [])
+        avatar_icon = data.get("avatar_icon", "")
         if not isinstance(display_name, str) or not display_name.strip() or len(display_name.strip()) > 80:
             return {}, "Informe o nome do usuário (até 80 caracteres)."
         if not isinstance(login, str) or not login.strip() or len(login.strip()) < 4 or len(login.strip()) > 40 or any(char.isspace() for char in login.strip()):
@@ -1231,6 +1234,8 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             return {}, "A senha deve ter de 4 a 128 caracteres."
         if role not in ("viewer", "editor", "admin"):
             return {}, "Selecione um nível de permissão válido."
+        if not isinstance(avatar_icon, str) or (avatar_icon and avatar_icon not in ANIMAL_PROFILE_ICONS):
+            return {}, "Selecione um ícone de perfil válido."
         if not isinstance(functions, list) or any(not isinstance(item, str) for item in functions):
             return {}, "Selecione funções/classificações válidas."
         functions = list(dict.fromkeys(item.strip() for item in functions if item.strip()))
@@ -1238,7 +1243,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             categories = {row["name"] for row in db.execute("SELECT name FROM task_categories").fetchall()}
         if not set(functions).issubset(categories):
             return {}, "Uma das funções selecionadas não existe mais. Atualize a página."
-        return {"display_name": display_name.strip(), "login": login.strip(), "password": password, "role": role, "functions": functions}, None
+        return {"display_name": display_name.strip(), "login": login.strip(), "password": password, "role": role, "functions": functions, "avatar_icon": avatar_icon}, None
 
     @staticmethod
     def _validate_scale(data: dict) -> tuple[dict, str | None]:
@@ -1301,18 +1306,22 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             end = date.fromisoformat(data.get("end_date", ""))
             period_number = int(data.get("period_number"))
             period_total = int(data.get("period_total"))
+            reference_year_value = data.get("reference_year")
+            reference_year = int(reference_year_value) if reference_year_value is not None else (2025 if start < date(2026, 12, 1) else 2026)
         except (TypeError, ValueError):
             return {}, "Preencha pessoa, período e datas válidas."
         if end < start:
             return {}, "A data de término deve ser igual ou posterior ao início."
         if period_total not in (1, 2, 3) or period_number < 1 or period_number > period_total:
             return {}, "Selecione um período válido (até 3 parcelas)."
+        if reference_year not in (2025, 2026):
+            return {}, "Selecione o ano de referência 2025 ou 2026."
         travel_days = data.get("travel_days")
         if travel_days not in (True, False, 0, 1):
             return {}, "Informe se há dias adicionais de deslocamento."
         days = (end - start).days + 1
         presentation = end.toordinal() + (2 if bool(travel_days) else 0) + 1
-        return {"person_id": person_id, "start_date": start.isoformat(), "end_date": end.isoformat(), "travel_days": int(bool(travel_days)), "vacation_days": days, "presentation_date": date.fromordinal(presentation).isoformat(), "period_number": period_number, "period_total": period_total}, None
+        return {"person_id": person_id, "start_date": start.isoformat(), "end_date": end.isoformat(), "travel_days": int(bool(travel_days)), "vacation_days": days, "presentation_date": date.fromordinal(presentation).isoformat(), "period_number": period_number, "period_total": period_total, "reference_year": reference_year}, None
 
     @staticmethod
     def _validate_person(data: dict) -> tuple[dict, str | None]:

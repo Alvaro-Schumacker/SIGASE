@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS public.app_users (
     password_hash TEXT,
     role TEXT NOT NULL CHECK (role IN ('viewer', 'editor', 'admin')),
     functions_json TEXT NOT NULL DEFAULT '[]',
+    avatar_icon TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -139,6 +140,7 @@ CREATE TABLE IF NOT EXISTS public.vacation_plan (
     presentation_date TEXT NOT NULL,
     period_number INTEGER NOT NULL CHECK (period_number BETWEEN 1 AND 3),
     period_total INTEGER NOT NULL CHECK (period_total BETWEEN 1 AND 3),
+    reference_year INTEGER NOT NULL DEFAULT 2026 CHECK (reference_year IN (2025, 2026)),
     task_added INTEGER NOT NULL DEFAULT 0 CHECK (task_added IN (0, 1)),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP

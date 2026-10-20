@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#263b2d"><title>SIGASE | Gestão administrativa</title>
-  <style>.hidden{display:none!important}</style><link rel="stylesheet" href="/styles.css?v=20261019-22">
+  <link rel="icon" type="image/png" href="/assets/brand/sigase-favicon.png?v=20261020-02"><style>.hidden{display:none!important}</style><link rel="stylesheet" href="/styles.css?v=20261020-03">
 </head>
 <body>
   <main id="login" class="login-screen">
     <section class="login-card">
-      <div class="brand-mark">S</div><p class="eyebrow">GESTÃO ADMINISTRATIVA</p>
-      <h1>SIGASE</h1><p class="muted">Sistema Integrado de Gestão Administrativa da Sargenteação</p>
+      <img class="login-logo" src="/assets/brand/sigase-logo.png" alt="SIGASE — Sistema de gestão administrativa da seção">
+      <p class="muted">Entre com suas credenciais para acessar o sistema.</p>
       <form id="login-form" novalidate>
         <label for="login-username">Login</label><input id="login-username" name="username" autocomplete="username" required placeholder="Seu login">
         <label for="login-password">Senha</label><input id="login-password" name="password" type="password" autocomplete="current-password" required placeholder="Sua senha">
@@ -21,31 +21,35 @@
   </main>
   <div id="app" class="app-shell hidden">
     <aside class="sidebar">
-      <div class="side-brand"><div class="brand-mark small">S</div><div><strong>SIGASE</strong><small>Gestão administrativa</small></div></div>
+      <div class="side-brand side-brand-logo"><img src="/assets/brand/sigase-logo.png" alt="SIGASE — Gestão administrativa da seção"></div>
       <div class="side-label">MENU</div>
-      <button class="nav-item active" data-view="dashboard"><span>▦</span> Visão geral</button>
-      <button class="nav-item" data-view="inbox"><span>✉</span> Caixa de entrada <b id="inbox-badge" class="nav-badge"></b></button>
-      <button class="nav-item" data-view="notices"><span>♧</span> Avisos <b id="notice-badge" class="nav-badge"></b></button>
-      <button class="nav-item" data-view="personnel"><span>♙</span> Equipe e permissões</button>
-      <button class="nav-item" data-view="unit"><span>▤</span> Efetivo da unidade</button>
-      <button class="nav-item" data-view="documents"><span>▧</span> Documentos</button>
-      <button class="nav-item" data-view="requirements"><span>▤</span> Requerimentos</button>
-      <button class="nav-item" data-view="force-maps"><span>▦</span> Mapa da Força</button>
-      <button class="nav-item" data-view="vacation"><span>▦</span> Plano de Férias</button>
-      <button class="nav-item" data-view="scales"><span>▥</span> Escala de serviço</button>
+      <button class="nav-item active" data-view="dashboard"><span class="nav-icon"><img src="/assets/icons/menu/pagina-inicial.png" alt=""></span> Página Inicial</button>
+      <button class="nav-item" data-view="inbox"><span class="nav-icon"><img src="/assets/icons/menu/caixa-de-entrada.png" alt=""></span> Caixa de entrada <b id="inbox-badge" class="nav-badge"></b></button>
+      <button class="nav-item" data-view="notices"><span class="nav-icon"><img src="/assets/icons/menu/avisos.png" alt=""></span> Avisos <b id="notice-badge" class="nav-badge"></b></button>
+      <button class="nav-item" data-view="unit"><span class="nav-icon"><img src="/assets/icons/menu/dados-da-unidade.png" alt=""></span> Dados da Unidade</button>
+      <button class="nav-item" data-view="scales"><span class="nav-icon"><img src="/assets/icons/menu/escalas-de-servico.png" alt=""></span> Escalas de serviço</button>
+      <button class="nav-item" data-view="documents"><span class="nav-icon"><img src="/assets/icons/menu/documentos.png" alt=""></span> Documentos</button>
+      <button class="nav-item" data-view="requirements"><span class="nav-icon"><img src="/assets/icons/menu/requerimentos.png" alt=""></span> Requerimentos</button>
+      <button class="nav-item" data-view="force-maps"><span class="nav-icon"><img src="/assets/icons/menu/mapas-da-forca.png" alt=""></span> Mapas da força</button>
+      <button class="nav-item" data-view="vacation"><span class="nav-icon"><img src="/assets/icons/menu/plano-de-ferias.png" alt=""></span> Plano de férias</button>
+      <button class="nav-item" data-view="personnel"><span class="nav-icon"><img src="/assets/icons/menu/usuarios.png" alt=""></span> Usuários</button>
       <div class="side-label section-label">AMBIENTE</div>
       <div class="prototype-tag"><span></span> Sistema local</div>
       <div class="side-bottom"><div class="user-chip"><div id="user-avatar" class="avatar">AD</div><div><strong id="user-name">Administrador</strong><small>Usuário</small></div><button id="logout-button" class="icon-button" title="Sair">↪</button></div></div>
     </aside>
     <main class="main-area">
-      <header class="topbar"><div class="breadcrumb">SIGASE <span>/</span> <strong id="crumb">Visão geral</strong></div><div class="top-actions"><span class="today" id="today"></span><button id="create-top" class="button primary">＋ Nova tarefa</button></div></header>
+      <header class="topbar"><div class="breadcrumb">SIGASE <span>/</span> <strong id="crumb">Página Inicial</strong></div><div class="top-actions"><span class="today" id="today"></span><button id="create-top" class="button primary">＋ Nova tarefa</button></div></header>
       <section id="dashboard-view" class="page-view">
-        <div class="page-heading"><div><p class="eyebrow">ACOMPANHAMENTO DA SEÇÃO</p><h1>Visão geral</h1><p class="muted">Acompanhe as demandas e os prazos da equipe.</p></div><div class="heading-note"><span class="pulse"></span> Ambiente local</div></div>
+        <div class="page-heading"><div><p class="eyebrow">ACOMPANHAMENTO DA SEÇÃO</p><h1>Página Inicial</h1><p class="muted">Acompanhe as demandas e os prazos da equipe.</p></div><div class="heading-note"><span class="pulse"></span> Ambiente local</div></div>
         <div id="stats" class="stats-grid"></div>
-        <div class="notice-dashboard-panel"><div class="section-head"><div><h2>Avisos</h2><p class="muted">Avisos próximos e lembretes direcionados a você</p></div><button class="text-button" data-view-link="notices">Ver todos <span>→</span></button></div><div id="dashboard-notices" class="notice-list"></div></div>
-        <div class="section-head"><div><h2>Atividade recente</h2><p class="muted">Atualizações mais recentes das tarefas</p></div><button class="text-button" id="all-tasks">Ver todas <span>→</span></button></div>
-        <div id="recent-list" class="task-list"></div>
-        <footer class="app-footer"><span>Criado por Álvaro</span><span>Versão 1.0.3</span></footer>
+        <div class="dashboard-columns">
+          <section class="dashboard-panel dashboard-task-panel"><div class="section-head"><div><h2>Próximas providências</h2><p class="muted">Tarefas recentes e prazos da equipe</p></div><button class="text-button" id="all-tasks">Ver todas <span>→</span></button></div><div id="recent-list" class="task-list"></div></section>
+          <div class="dashboard-side-column">
+            <section class="dashboard-panel notice-dashboard-panel"><div class="section-head"><div><h2>Avisos</h2><p class="muted">Lembretes próximos para você</p></div><button class="text-button" data-view-link="notices">Ver todos <span>→</span></button></div><div id="dashboard-notices" class="notice-list"></div></section>
+            <section class="dashboard-panel vacation-dashboard-panel"><div class="section-head"><div><h2>Férias próximas</h2><p class="muted">Inícios e apresentações do efetivo</p></div><button class="text-button" data-view-link="vacation">Ver plano <span>→</span></button></div><div id="dashboard-vacations" class="dashboard-vacation-list"></div></section>
+          </div>
+        </div>
+        <footer class="app-footer"><span>Criado por Álvaro</span><span>Versão 1.0.4</span></footer>
       </section>
       <section id="inbox-view" class="page-view hidden">
         <div class="page-heading"><div><p class="eyebrow">DEMANDAS DA EQUIPE</p><h1>Caixa de entrada</h1><p class="muted">Organize, acompanhe e conclua as tarefas da seção.</p></div><button id="create-inbox" class="button primary">＋ Nova tarefa</button></div>
@@ -58,12 +62,12 @@
         <div id="notices-list" class="notice-list"></div>
       </section>
       <section id="personnel-view" class="page-view hidden">
-        <div class="page-heading"><div><p class="eyebrow">USUÁRIOS DO SISTEMA</p><h1>Equipe e permissões</h1><p class="muted">Gerencie usuários, níveis de acesso e funções responsáveis por cada classificação.</p></div><div class="team-actions"><button id="manage-categories" class="button secondary hidden">Gerenciar funções</button><button id="add-person" class="button primary hidden">＋ Adicionar usuário</button></div></div>
+        <div class="page-heading"><div><p class="eyebrow">USUÁRIOS DO SISTEMA</p><h1>Usuários</h1><p class="muted">Gerencie usuários, níveis de acesso e funções responsáveis por cada classificação.</p></div><div class="team-actions"><button id="manage-categories" class="button secondary hidden">Gerenciar funções</button><button id="add-person" class="button primary hidden">＋ Adicionar usuário</button></div></div>
         <div class="inbox-tools"><div class="filters"><label class="search-box"><span>⌕</span><input id="person-search" placeholder="Buscar por usuário, nível ou função..."></label><span id="permission-note" class="permission-note"></span></div></div>
         <div id="person-count" class="result-count"></div><div id="personnel-list" class="personnel-list"></div>
       </section>
       <section id="unit-view" class="page-view hidden">
-        <div class="page-heading"><div><p class="eyebrow">CADASTRO DE PESSOAL</p><h1>Efetivo da unidade</h1><p class="muted">Consulte e mantenha as fichas do efetivo.</p></div><button id="add-unit-person" class="button primary hidden">＋ Adicionar pessoa</button></div>
+        <div class="page-heading"><div><p class="eyebrow">CADASTRO DE PESSOAL</p><h1>Dados da Unidade</h1><p class="muted">Consulte e mantenha as fichas do efetivo.</p></div><button id="add-unit-person" class="button primary hidden">＋ Adicionar pessoa</button></div>
         <div class="inbox-tools"><div class="filters"><label class="search-box"><span>⌕</span><input id="unit-search" placeholder="Buscar por nome, guerra, P/G, QM ou seção..."></label><span id="unit-permission" class="permission-note"></span></div></div>
         <div id="unit-count" class="result-count"></div><div class="unit-table-wrap"><table class="unit-table"><thead><tr><th>Militar</th><th>Posto/graduação e QM</th><th>Idade</th><th>Nascimento</th><th>Seção</th><th>Ações</th></tr></thead><tbody id="unit-list"></tbody></table></div>
       </section>
@@ -75,19 +79,19 @@
         <div class="archive-label">DOCUMENTOS SALVOS</div><div id="document-list" class="document-list"></div>
       </section>
       <section id="force-maps-view" class="page-view hidden">
-        <div class="page-heading"><div><p class="eyebrow">CONTROLE DE PRESENÇA</p><h1>Mapa da Força</h1><p class="muted">Registre observações da atividade para o efetivo cadastrado na unidade.</p></div><button id="new-force-map" class="button primary hidden">＋ Novo mapa</button></div>
+        <div class="page-heading"><div><p class="eyebrow">CONTROLE DE PRESENÇA</p><h1>Mapas da força</h1><p class="muted">Registre observações da atividade para o efetivo cadastrado na unidade.</p></div><button id="new-force-map" class="button primary hidden">＋ Novo mapa</button></div>
         <div class="privacy-note"><strong>Mapa da Força:</strong> cada registro começa com as pessoas atualmente cadastradas no efetivo. Observação em branco indica presença, para marcação manual a caneta.</div>
         <div class="archive-label">MAPAS SALVOS</div><div id="force-map-list" class="document-list"></div>
       </section>
       <section id="vacation-view" class="page-view hidden">
-        <div class="page-heading"><div><p class="eyebrow">PLANEJAMENTO DO EFETIVO</p><h1>Plano de Férias</h1><p class="muted">Organize os períodos de férias e acompanhe as datas no calendário.</p></div><button id="new-vacation" class="button primary hidden">＋ Incluir período</button></div>
+        <div class="page-heading"><div><p class="eyebrow">PLANEJAMENTO DO EFETIVO</p><h1>Plano de férias</h1><p class="muted">Organize os períodos de férias e acompanhe as datas no calendário.</p></div><button id="new-vacation" class="button primary hidden">＋ Incluir período</button></div>
         <div class="privacy-note"><strong>Avisos de férias:</strong> ao salvar um novo período, o sistema cria avisos para o início das férias e a data de apresentação, considerando os dias de deslocamento selecionados.</div>
         <div class="vacation-calendar-panel"><div class="calendar-toolbar"><div><p class="eyebrow">CALENDÁRIO MENSAL</p><h2 id="calendar-month"></h2></div><div class="calendar-nav"><button class="button secondary" id="calendar-prev" aria-label="Mês anterior">‹</button><button class="button secondary" id="calendar-today">Hoje</button><button class="button secondary" id="calendar-next" aria-label="Próximo mês">›</button></div></div><div class="calendar-grid" id="vacation-calendar"></div></div>
         <div class="vacation-list-head"><div><h2>Períodos cadastrados</h2><p id="vacation-count" class="muted">Carregando períodos...</p></div><label class="search-box"><span>⌕</span><input id="vacation-search" placeholder="Buscar por nome ou posto..."></label></div>
         <div id="vacation-list" class="vacation-list"></div>
       </section>
       <section id="scales-view" class="page-view hidden">
-        <div class="page-heading"><div><p class="eyebrow">ORGANIZAÇÃO DOS SERVIÇOS</p><h1>Escala de serviço</h1><p class="muted">Monte escalas mensais por militar, serviço e dia.</p></div><button id="new-scale" class="button primary hidden">＋ Criar escala</button></div>
+        <div class="page-heading"><div><p class="eyebrow">ORGANIZAÇÃO DOS SERVIÇOS</p><h1>Escalas de serviço</h1><p class="muted">Monte escalas mensais por militar, serviço e dia.</p></div><button id="new-scale" class="button primary hidden">＋ Criar escala</button></div>
         <div class="privacy-note"><strong>Participantes:</strong> selecione os militares cadastrados no efetivo. Somente administradores podem criar ou editar escalas.</div>
         <div id="scale-list" class="scale-list"></div>
         <section id="scale-board" class="scale-board hidden">
@@ -102,5 +106,5 @@
   <div id="modal-layer" class="modal-layer hidden"><section id="modal" class="modal" role="dialog" aria-modal="true"></section></div>
   <div id="network-loading" class="network-loading hidden" role="status" aria-live="polite"><div class="network-loading-card"><span class="loading-spinner" aria-hidden="true"></span><strong>Sincronizando…</strong></div></div>
   <div id="toast" class="toast"></div>
-  <script src="/app.js?v=20261019-22"></script>
+  <script src="/app.js?v=20261020-05"></script>
 </body></html>

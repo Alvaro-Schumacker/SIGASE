@@ -1,4 +1,4 @@
-# SIGASE 1.0.3
+# SIGASE 1.0.4
 
 Aplicação executada localmente, com dados cadastrais e registros do sistema armazenados em um banco PostgreSQL no Supabase. O navegador conversa somente com o servidor Python local; a connection string do banco fica no backend e não é enviada ao navegador.
 
@@ -14,6 +14,16 @@ O schema cria as tabelas e índices do sistema, incluindo a tabela `tasks` para 
 ### Atualização do efetivo da unidade
 
 Esta versão adiciona número militar e posição de antiguidade ao efetivo. Em um projeto Supabase já existente, execute manualmente `supabase/migration_20261019_unit_personnel_seniority.sql` no SQL Editor antes de iniciar o SIGASE atualizado. A migração preenche uma ordem inicial por nome dentro de cada graduação; revise as posições no cadastro para refletir a antiguidade real. Nenhuma alteração foi aplicada diretamente ao seu projeto Supabase.
+
+Os perfis de usuário agora aceitam um ícone de animal. Em um projeto Supabase já existente, execute também `supabase/migration_user_avatar_icon.sql` no SQL Editor. Os sete ícones de perfil ficam em `assets/icons/animals/`; ícones do menu ficam em `assets/icons/menu/`, e logotipo e favicon em `assets/brand/`.
+
+### Ano de referência do plano de férias
+
+O plano de férias agora organiza os períodos em `REF 2025` e `REF 2026`, cada um com as pastas Anteriores, Atuais e Futuras. Em projetos Supabase existentes, execute `supabase/migration_vacation_reference_year.sql` no SQL Editor para adicionar e preencher o campo de referência antes de usar a versão 1.0.4. Ao incluir um período, o formulário sugere REF 2025 para início antes de 1º de dezembro de 2026 e REF 2026 a partir dessa data. Essa sugestão pode ser alterada e não restringe as datas; períodos existentes mantêm o ano de referência salvo. Nenhuma alteração foi aplicada diretamente ao seu projeto Supabase.
+
+## Organização dos arquivos
+
+Imagens do sistema ficam em `assets/`, scripts e páginas principais na raiz, e scripts do banco em `supabase/`. O banco SQLite antigo foi preservado em `data/legacy/`; o servidor atual usa o Supabase e não lê esse arquivo.
 
 ## Executar localmente
 
