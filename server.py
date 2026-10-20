@@ -19,6 +19,28 @@ BASE_DIR = Path(__file__).resolve().parent
 UNIT_RANKS = ("Cap", "1º Ten", "2º Ten", "STen", "1º Sgt", "2º Sgt", "3º Sgt", "Cb EP", "Sd EP", "Sd EV")
 PASSWORD_ITERATIONS = 180_000
 ID_TABLES = {"app_users", "task_categories", "tasks", "personnel", "unit_personnel", "documents", "force_maps", "vacation_plan", "duty_scales", "notices"}
+SCALE_SWAP_PREFIX = "__TROCA_SERVICO__::"
+SCALE_EXCLUDED_PREFIX = "__FORA_ESCALA__::"
+SCALE_REST_PREFIX = "__FOLGA_MANUAL__::"
+
+
+def _scale_assignment_service(value):
+    if not isinstance(value, str):
+        return None
+    if value.startswith(SCALE_SWAP_PREFIX):
+        try:
+            return json.loads(value[len(SCALE_SWAP_PREFIX):]).get("service")
+        except (ValueError, AttributeError):
+            return None
+    if value.startswith(SCALE_EXCLUDED_PREFIX):
+        return None
+    if value.startswith(SCALE_REST_PREFIX):
+        return None
+    return value
+
+
+def _scale_assignment_excluded(value):
+    return isinstance(value, str) and value.startswith(SCALE_EXCLUDED_PREFIX)
 
 
 def _password_hash(password: str, salt: bytes | None = None) -> str:
@@ -180,6 +202,34 @@ def initialize_db() -> None:
                 ("Administrador", "0000", _password_hash("0000"), "admin", "[]"),
             )
 
+
+
+def apply_unit_seniority(db, record: dict, person_id: int | None = None) -> str | None:
+    existing = db.execute("SELECT id, rank, seniority_order FROM unit_personnel WHERE id=?", (person_id,)).fetchone() if person_id is not None else None
+    if person_id is not None and existing is None:
+        return "Cadastro não encontrado."
+    if person_id is None:
+        peers = db.execute("SELECT COUNT(*) AS count FROM unit_personnel WHERE rank=?", (record["rank"],)).fetchone()["count"]
+    else:
+        peers = db.execute("SELECT COUNT(*) AS count FROM unit_personnel WHERE rank=? AND id<>?", (record["rank"], person_id)).fetchone()["count"]
+    position = int(record.get("seniority_order") or peers + 1)
+    if position < 1 or position > peers + 1:
+        return f"A antiguidade deve ficar entre 1 e {peers + 1} nesta graduação."
+    record["seniority_order"] = position
+    if existing is None:
+        db.execute("UPDATE unit_personnel SET seniority_order=seniority_order+1 WHERE rank=? AND seniority_order>=?", (record["rank"], position))
+        return None
+    old_rank = existing["rank"]
+    old_position = int(existing["seniority_order"] or 0)
+    if old_rank == record["rank"]:
+        if position < old_position:
+            db.execute("UPDATE unit_personnel SET seniority_order=seniority_order+1 WHERE rank=? AND id<>? AND seniority_order>=? AND seniority_order<?", (old_rank, person_id, position, old_position))
+        elif position > old_position:
+            db.execute("UPDATE unit_personnel SET seniority_order=seniority_order-1 WHERE rank=? AND id<>? AND seniority_order>? AND seniority_order<=?", (old_rank, person_id, old_position, position))
+    else:
+        db.execute("UPDATE unit_personnel SET seniority_order=seniority_order-1 WHERE rank=? AND id<>? AND seniority_order>?", (old_rank, person_id, old_position))
+        db.execute("UPDATE unit_personnel SET seniority_order=seniority_order+1 WHERE rank=? AND seniority_order>=?", (record["rank"], position))
+    return None
 
 class SigaseHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -356,7 +406,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             if not self._require_user():
                 return
             kind = parse_qs(urlparse(self.path).query).get("kind", [None])[0]
-            if kind not in ("aditamento", "pernoite", "fatd"):
+            if kind not in ("aditamento", "pernoite", "fatd", "prorrogacao"):
                 self._json(400, {"error": "Selecione a área documental."})
                 return
             with connect_db() as db:
@@ -589,10 +639,14 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 self._json(400, {"error": error})
                 return
             with connect_db() as db:
+                seniority_error = apply_unit_seniority(db, record)
+                if seniority_error:
+                    self._json(400, {"error": seniority_error})
+                    return
                 cur = db.execute("""
                     INSERT INTO unit_personnel
-                    (full_name, war_name, birth_date, rank, qm, section, address, cpf, military_id, additional_data, civil_id, prec_cp, blood_type, email, religion, phone, birth_city, mother_name, father_name, cnh, education, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    (full_name, war_name, birth_date, rank, qm, section, address, cpf, military_id, military_number, seniority_order, additional_data, civil_id, prec_cp, blood_type, email, religion, phone, birth_city, mother_name, father_name, cnh, education, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """, tuple(record.values()))
                 row = db.execute("SELECT * FROM unit_personnel WHERE id=?", (cur.lastrowid,)).fetchone()
             self._json(201, {"person": self._unit_record(row)})
@@ -604,9 +658,17 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             if error:
                 self._json(400, {"error": error})
                 return
-            with connect_db() as db:
-                cur = db.execute("INSERT INTO documents (kind, bulletin_number, document_date, data_json, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)", (record["kind"], record["bulletin_number"], record["document_date"], json.dumps(record["data"], ensure_ascii=False)))
-                row = db.execute("SELECT * FROM documents WHERE id=?", (cur.lastrowid,)).fetchone()
+            try:
+                with connect_db() as db:
+                    cur = db.execute("INSERT INTO documents (kind, bulletin_number, document_date, data_json, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)", (record["kind"], record["bulletin_number"], record["document_date"], json.dumps(record["data"], ensure_ascii=False)))
+                    row = db.execute("SELECT * FROM documents WHERE id=?", (cur.lastrowid,)).fetchone()
+            except sqlite3.Error as error:
+                print(f"[SIGASE DB] Falha ao criar documento: {error}", flush=True)
+                if record["kind"] == "prorrogacao" and "documents_kind_check" in str(error):
+                    self._json(503, {"error": "O Supabase ainda não aceita requerimentos de prorrogação. Execute a migração supabase/migration_20261019_prorrogacao_documents.sql e tente novamente."})
+                else:
+                    self._json(503, {"error": "Não foi possível salvar o documento no banco de dados. Verifique a conexão com o Supabase e o log do servidor."})
+                return
             self._json(201, {"document": self._document_record(row)})
             return
         if path == "/api/force-maps":
@@ -677,9 +739,23 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             status = body.get("status", "service" if service else "off")
             excluded_days = body.get("excluded_days", 1)
             reason = body.get("reason", "")
-            if status not in ("off", "service", "excluded"):
+            swap_name = body.get("swap_name", "")
+            if not isinstance(swap_name, str) or len(swap_name.strip()) > 100:
+                self._json(400, {"error": "Informe um nome válido para a troca (até 100 caracteres)."})
+                return
+            rest_count = body.get("rest_count")
+            if status not in ("off", "service", "excluded", "rest"):
                 self._json(400, {"error": "Selecione uma situação válida para a célula."})
                 return
+            if status == "rest":
+                try:
+                    rest_count = int(rest_count)
+                except (TypeError, ValueError):
+                    self._json(400, {"error": "Informe uma contagem de folga entre 0 e 99."})
+                    return
+                if not 0 <= rest_count <= 99:
+                    self._json(400, {"error": "A contagem manual deve ser entre 0 e 99."})
+                    return
             if status == "service" and (not service or not service.strip()):
                 self._json(400, {"error": "Selecione um serviço cadastrado."})
                 return
@@ -707,13 +783,15 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                     if service not in service_config:
                         self._json(400, {"error": "Serviço não cadastrado nesta escala."})
                         return
-                    occupied = sum(1 for assignment_key, assigned_service in assignments.items() if assignment_key.endswith(f"|{cell_date}") and assigned_service == service and assignment_key != key)
+                    occupied = sum(1 for assignment_key, assigned_service in assignments.items() if assignment_key.endswith(f"|{cell_date}") and _scale_assignment_service(assigned_service) == service and assignment_key != key)
                     if occupied >= service_config[service]:
                         self._json(400, {"error": f"As {service_config[service]} vaga(s) de {service} para este dia já foram preenchidas."})
                         return
-                    assignments[key] = service
+                    assignments[key] = SCALE_SWAP_PREFIX + json.dumps({"service": service, "swap_name": swap_name.strip()}, ensure_ascii=False) if swap_name.strip() else service
+                elif status == "rest":
+                    assignments[key] = SCALE_REST_PREFIX + str(rest_count)
                 elif status == "excluded":
-                    marker = "__FORA_ESCALA__::" + reason.strip()
+                    marker = SCALE_EXCLUDED_PREFIX + reason.strip()
                     start_date = date.fromisoformat(cell_date)
                     for offset in range(excluded_days):
                         excluded_date = (start_date.fromordinal(start_date.toordinal() + offset)).isoformat()
@@ -868,8 +946,12 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 self._json(400, {"error": error})
                 return
             with connect_db() as db:
+                seniority_error = apply_unit_seniority(db, record, person_id)
+                if seniority_error:
+                    self._json(404 if seniority_error == "Cadastro não encontrado." else 400, {"error": seniority_error})
+                    return
                 cur = db.execute("""
-                    UPDATE unit_personnel SET full_name=?, war_name=?, birth_date=?, rank=?, qm=?, section=?, address=?, cpf=?, military_id=?, additional_data=?, civil_id=?, prec_cp=?, blood_type=?, email=?, religion=?, phone=?, birth_city=?, mother_name=?, father_name=?, cnh=?, education=?, updated_at=CURRENT_TIMESTAMP
+                    UPDATE unit_personnel SET full_name=?, war_name=?, birth_date=?, rank=?, qm=?, section=?, address=?, cpf=?, military_id=?, military_number=?, seniority_order=?, additional_data=?, civil_id=?, prec_cp=?, blood_type=?, email=?, religion=?, phone=?, birth_city=?, mother_name=?, father_name=?, cnh=?, education=?, updated_at=CURRENT_TIMESTAMP
                     WHERE id=?
                 """, (*record.values(), person_id))
                 row = db.execute("SELECT * FROM unit_personnel WHERE id=?", (person_id,)).fetchone()
@@ -890,9 +972,17 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             if error:
                 self._json(400, {"error": error})
                 return
-            with connect_db() as db:
-                cur = db.execute("UPDATE documents SET kind=?, bulletin_number=?, document_date=?, data_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (record["kind"], record["bulletin_number"], record["document_date"], json.dumps(record["data"], ensure_ascii=False), document_id))
-                row = db.execute("SELECT * FROM documents WHERE id=?", (document_id,)).fetchone()
+            try:
+                with connect_db() as db:
+                    cur = db.execute("UPDATE documents SET kind=?, bulletin_number=?, document_date=?, data_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (record["kind"], record["bulletin_number"], record["document_date"], json.dumps(record["data"], ensure_ascii=False), document_id))
+                    row = db.execute("SELECT * FROM documents WHERE id=?", (document_id,)).fetchone()
+            except sqlite3.Error as error:
+                print(f"[SIGASE DB] Falha ao atualizar documento: {error}", flush=True)
+                if record["kind"] == "prorrogacao" and "documents_kind_check" in str(error):
+                    self._json(503, {"error": "O Supabase ainda não aceita requerimentos de prorrogação. Execute a migração supabase/migration_20261019_prorrogacao_documents.sql e tente novamente."})
+                else:
+                    self._json(503, {"error": "Não foi possível atualizar o documento no banco de dados. Verifique a conexão com o Supabase e o log do servidor."})
+                return
             if not cur.rowcount or row is None:
                 self._json(404, {"error": "Documento não encontrado."})
                 return
@@ -963,7 +1053,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 valid_services = {item["name"] for item in record["services"]}
                 valid_people = set(record["participants"])
                 assignments = json.loads(existing["assignments_json"]) if existing else {}
-                assignments = {key: value for key, value in assignments.items() if int(key.split("|", 1)[0]) in valid_people and (value in valid_services or (isinstance(value, str) and value.startswith("__FORA_ESCALA__::")))}
+                assignments = {key: value for key, value in assignments.items() if int(key.split("|", 1)[0]) in valid_people and (_scale_assignment_service(value) in valid_services or _scale_assignment_excluded(value) or (isinstance(value, str) and value.startswith(SCALE_REST_PREFIX)))}
                 cur = db.execute("UPDATE duty_scales SET name=?,mode=?,services_json=?,participants_json=?,assignments_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (record["name"], record["mode"], json.dumps(record["services"], ensure_ascii=False), json.dumps(record["participants"]), json.dumps(assignments, ensure_ascii=False), scale_id))
                 row = db.execute("SELECT * FROM duty_scales WHERE id=?", (scale_id,)).fetchone()
                 roster = {r["id"]: dict(r) for r in db.execute("SELECT id, full_name, war_name, rank FROM unit_personnel").fetchall()}
@@ -1061,10 +1151,11 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 self._json(400, {"error": "Identificador inválido."})
                 return
             with connect_db() as db:
-                person = db.execute("SELECT id FROM unit_personnel WHERE id=?", (person_id,)).fetchone()
+                person = db.execute("SELECT id,rank,seniority_order FROM unit_personnel WHERE id=?", (person_id,)).fetchone()
                 if not person:
                     self._json(404, {"error": "Cadastro do efetivo não encontrado."})
                     return
+                db.execute("UPDATE unit_personnel SET seniority_order=seniority_order-1 WHERE rank=? AND seniority_order>?", (person["rank"], person["seniority_order"] or 0))
                 db.execute("DELETE FROM notices WHERE category='ferias' AND source_type='vacation' AND source_id IN (SELECT id FROM vacation_plan WHERE person_id=?)", (person_id,))
                 removed_periods = db.execute("DELETE FROM vacation_plan WHERE person_id=?", (person_id,)).rowcount
                 updated_scales = 0
@@ -1166,6 +1257,8 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             if not isinstance(item, dict):
                 return {}, "Os serviços informados são inválidos."
             service_name = item.get("name")
+            abbreviation = item.get("abbreviation", "")
+            color = item.get("color", "green")
             try:
                 slots = int(item.get("daily_slots"))
             except (TypeError, ValueError):
@@ -1173,10 +1266,14 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             if not isinstance(service_name, str) or not service_name.strip() or len(service_name.strip()) > 40 or slots < 1 or slots > 100:
                 return {}, "Cada serviço precisa de nome e quantidade diária válida (1 a 100)."
             service_name = service_name.strip()
+            if not isinstance(abbreviation, str) or not abbreviation.strip() or len(abbreviation.strip()) > 8:
+                return {}, "Informe uma abreviação para cada serviço (até 8 caracteres)."
+            if color not in ("yellow", "blue", "green"):
+                return {}, "Selecione uma cor válida para cada serviço."
             if service_name.casefold() in names:
                 return {}, "Os nomes dos serviços devem ser únicos dentro da escala."
             names.add(service_name.casefold())
-            cleaned_services.append({"name": service_name, "daily_slots": slots})
+            cleaned_services.append({"name": service_name, "abbreviation": abbreviation.strip(), "color": color, "daily_slots": slots})
         participants = data.get("participants")
         if not isinstance(participants, list) or not participants:
             return {}, "Selecione ao menos um militar para concorrer à escala."
@@ -1246,6 +1343,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             "full_name": ("Nome completo", 120),
             "war_name": ("Nome de guerra", 80),
             "rank": ("Posto/graduação", 40),
+            "military_number": ("Número militar", 20),
             "qm": ("QM", 40),
             "section": ("Seção", 100),
             "address": ("Endereço", 240),
@@ -1270,13 +1368,22 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             if not isinstance(value, str):
                 return {}, f"O campo {label.lower()} é inválido."
             value = value.strip()
-            if key in ("full_name", "war_name") and not value:
+            if key in ("full_name", "war_name", "rank") and not value:
                 return {}, f"Preencha o campo {label.lower()}."
             if len(value) > max_length:
                 return {}, f"O campo {label.lower()} excede o limite de {max_length} caracteres."
             cleaned[key] = value
-        if cleaned["rank"] and cleaned["rank"] not in UNIT_RANKS:
+        if cleaned["rank"] not in UNIT_RANKS:
             return {}, "Selecione um posto/graduação da lista de antiguidade."
+        if cleaned["rank"] == "Sd EV" and not cleaned["military_number"]:
+            return {}, "Informe o número militar do Soldado EV."
+        raw_order = data.get("seniority_order", 1)
+        try:
+            seniority_order = int(raw_order)
+        except (TypeError, ValueError):
+            return {}, "Informe a posição de antiguidade nesta graduação."
+        if isinstance(raw_order, bool) or seniority_order < 1:
+            return {}, "A posição de antiguidade deve ser um número positivo."
         birth_date = data.get("birth_date")
         if birth_date:
             try:
@@ -1290,8 +1397,9 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             cleaned["birth_date"] = ""
         if cleaned["cpf"] and cleaned["cpf"] != "000.000.000-00" and len(cleaned["cpf"]) not in (11, 14):
             return {}, "Informe um CPF válido no formato 000.000.000-00."
+        cleaned["seniority_order"] = seniority_order
         ordered = {key: cleaned[key] for key in (
-            "full_name", "war_name", "birth_date", "rank", "qm", "section", "address", "cpf", "military_id", "additional_data",
+            "full_name", "war_name", "birth_date", "rank", "qm", "section", "address", "cpf", "military_id", "military_number", "seniority_order", "additional_data",
             "civil_id", "prec_cp", "blood_type", "email", "religion", "phone", "birth_city", "mother_name", "father_name", "cnh", "education",
         )}
         return ordered, None
@@ -1305,7 +1413,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             result["age"] = now.year - born.year - ((now.month, now.day) < (born.month, born.day))
         except ValueError:
             result["age"] = None
-        for field in ("civil_id", "prec_cp", "blood_type", "email", "religion", "phone", "birth_city", "mother_name", "father_name", "cnh", "education"):
+        for field in ("military_number", "civil_id", "prec_cp", "blood_type", "email", "religion", "phone", "birth_city", "mother_name", "father_name", "cnh", "education"):
             result.setdefault(field, "")
         return result
 
@@ -1327,7 +1435,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
         cleaned = []
         seen = set()
         with connect_db() as db:
-            roster = {row["id"]: row for row in db.execute("SELECT id,rank,war_name FROM unit_personnel").fetchall()}
+            roster = {row["id"]: row for row in db.execute("SELECT id,rank,war_name,military_number,seniority_order FROM unit_personnel").fetchall()}
         for item in rows:
             if not isinstance(item, dict):
                 return {}, "Há uma linha inválida no Mapa da Força."
@@ -1345,7 +1453,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             if observation not in allowed_observations:
                 return {}, "Selecione uma observação válida."
             other_text = str(item.get("other_text", "")).strip()[:80] if observation == "Outros" else ""
-            cleaned.append({"person_id": person_id, "rank": rank, "war_name": war_name, "observation": observation, "other_text": other_text})
+            cleaned.append({"person_id": person_id, "rank": rank, "war_name": war_name, "military_number": str(person["military_number"] if person else item.get("military_number", "")).strip()[:20], "seniority_order": int(person["seniority_order"] or 9999) if person else int(item.get("seniority_order") or 9999), "observation": observation, "other_text": other_text})
         return {"activity_date": parsed_date.isoformat(), "data": {"activity_date": parsed_date.isoformat(), "rows": cleaned}}, None
 
     @staticmethod
@@ -1357,7 +1465,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
     @staticmethod
     def _validate_document(data: dict) -> tuple[dict, str | None]:
         kind = data.get("kind")
-        if kind not in ("aditamento", "pernoite", "fatd"):
+        if kind not in ("aditamento", "pernoite", "fatd", "prorrogacao"):
             return {}, "Tipo documental inválido."
         number = data.get("bulletin_number")
         if not isinstance(number, str) or not number.strip() or len(number.strip()) > 30:
