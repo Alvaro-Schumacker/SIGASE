@@ -1,4 +1,4 @@
-# SIGASE 1.0.5
+# SIGASE 1.0.6
 
 Aplicação executada localmente, com dados cadastrais e registros do sistema armazenados em um banco PostgreSQL no Supabase. O navegador conversa somente com o servidor Python local; a connection string do banco fica no backend e não é enviada ao navegador.
 
@@ -55,6 +55,7 @@ Abra `http://127.0.0.1:8000`. O servidor escuta apenas em `127.0.0.1`; `SIGASE_P
 - Efetivo, avisos, documentos, mapa da força e plano de férias.
 - Escalas de serviço mensais com ordem definida dos participantes, contagem de folgas e relatório dos próximos serviços.
 - Indicador visual durante operações de rede mais demoradas.
+- Notas da versão exibidas uma vez por usuário, com ciência registrada no banco para sincronizar entre dispositivos. Se houver versões ainda não vistas, aparece somente a nota atual.
 - Registros da API armazenados no PostgreSQL do Supabase.
 
 ## Dados e limitações

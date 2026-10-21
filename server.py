@@ -382,6 +382,22 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             else:
                 self._json(200, self._user_payload(record))
             return
+        if path == "/api/release-note":
+            current = self._current_user_record()
+            if not current:
+                self._require_user()
+                return
+            version = parse_qs(urlparse(self.path).query).get("version", [""])[0].strip()
+            if not version or len(version) > 30:
+                self._json(400, {"error": "Informe uma versão válida."})
+                return
+            with connect_db() as db:
+                row = db.execute(
+                    "SELECT 1 FROM release_note_acknowledgments WHERE user_id=? AND version=?",
+                    (current["id"], version),
+                ).fetchone()
+            self._json(200, {"acknowledged": bool(row)})
+            return
         if path == "/api/users":
             if not self._require_user():
                 return
@@ -585,6 +601,22 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             except (sqlite3.Error, AttributeError):
                 pass
             self._json(200, {"ok": True}, {"Set-Cookie": "sigase_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict"})
+            return
+        if path == "/api/release-note/ack":
+            current = self._current_user_record()
+            if not current:
+                self._require_user()
+                return
+            version = self._body().get("version")
+            if not isinstance(version, str) or not version.strip() or len(version.strip()) > 30:
+                self._json(400, {"error": "Informe uma versão válida."})
+                return
+            with connect_db() as db:
+                db.execute(
+                    "INSERT INTO release_note_acknowledgments (user_id,version) VALUES (?,?) ON CONFLICT (user_id,version) DO NOTHING",
+                    (current["id"], version.strip()),
+                )
+            self._json(200, {"ok": True})
             return
         if path == "/api/notices":
             current_user = self._current_user_record()
