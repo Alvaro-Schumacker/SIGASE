@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import sqlite3
+import time
 import unicodedata
 from datetime import date, datetime, timezone
 from http.cookies import SimpleCookie
@@ -23,6 +24,8 @@ SCALE_SWAP_PREFIX = "__TROCA_SERVICO__::"
 SCALE_EXCLUDED_PREFIX = "__FORA_ESCALA__::"
 SCALE_REST_PREFIX = "__FOLGA_MANUAL__::"
 ANIMAL_PROFILE_ICONS = {"01_cervo.png", "02_cao.png", "03_coelho.png", "04_cabra.png", "05_lobo.png", "06_lebre.png", "07_touro.png"}
+EDIT_AREAS = {"tasks", "unit", "scales", "documents", "requirements", "force_maps", "vacation"}
+REQUIREMENT_KINDS = {"prorrogacao", "adiantamento13"}
 
 
 def _scale_assignment_service(value):
@@ -192,16 +195,32 @@ def initialize_db() -> None:
     schema_path = BASE_DIR / "supabase" / "schema.sql"
     if not schema_path.exists():
         raise sqlite3.DatabaseError("Arquivo supabase/schema.sql não foi encontrado.")
-    with connect_db() as db:
-        for statement in schema_path.read_text(encoding="utf-8").split(";"):
-            if statement.strip():
-                db.execute(statement)
-        db.executemany("INSERT INTO task_categories (name) VALUES (?) ON CONFLICT DO NOTHING", [(name,) for name in ("Férias", "Aditamentos", "Pernoites")])
-        if db.execute("SELECT COUNT(*) AS count FROM app_users").fetchone()["count"] == 0:
-            db.execute(
-                "INSERT INTO app_users (display_name,login,password_hash,role,functions_json) VALUES (?,?,?,?,?)",
-                ("Administrador", "0000", _password_hash("0000"), "admin", "[]"),
-            )
+    schema_statements = [
+        statement for statement in schema_path.read_text(encoding="utf-8").split(";")
+        if statement.strip()
+    ]
+    # Several local/hosted instances can start against the same Supabase DB.
+    # Serialize bootstrap DDL so concurrent CREATE/ALTER/REVOKE statements do
+    # not acquire the same table locks in different orders.
+    for attempt in range(3):
+        try:
+            with connect_db() as db:
+                db.execute("SELECT pg_advisory_xact_lock(73122026001)")
+                for statement in schema_statements:
+                    db.execute(statement)
+                db.executemany("INSERT INTO task_categories (name) VALUES (?) ON CONFLICT DO NOTHING", [(name,) for name in ("Férias", "Aditamentos", "Pernoites")])
+                if db.execute("SELECT COUNT(*) AS count FROM app_users").fetchone()["count"] == 0:
+                    db.execute(
+                        "INSERT INTO app_users (display_name,login,password_hash,role,functions_json) VALUES (?,?,?,?,?)",
+                        ("Administrador", "0000", _password_hash("0000"), "admin", "[]"),
+                    )
+            return
+        except sqlite3.DatabaseError as error:
+            if "deadlock detected" not in str(error).lower() or attempt == 2:
+                raise
+            # PostgreSQL aborts the whole transaction after a deadlock. The
+            # context manager has rolled it back; reconnect and retry cleanly.
+            time.sleep(0.5 * (attempt + 1))
 
 
 
@@ -296,31 +315,48 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             return None
         return user
 
-    def _require_document_editor(self) -> str | None:
+    def _require_area(self, area: str) -> str | None:
         user = self._require_user()
         record = self._current_user_record() if user else None
-        if user and (not record or record["role"] not in ("admin", "editor")):
-            self._json(403, {"error": "Seu nível de acesso permite somente visualizar documentos."})
+        if not user:
             return None
-        return user
+        if record and record["role"] == "admin":
+            return user
+        try:
+            permissions = json.loads(record["permissions_json"] or "[]") if record else []
+        except (TypeError, ValueError):
+            permissions = []
+        if record and record["role"] == "editor" and area in permissions:
+            return user
+        self._json(403, {"error": "Seu perfil não tem permissão de edição nesta área."})
+        return None
 
     @staticmethod
     def _user_record(row: sqlite3.Row) -> dict:
         record = dict(row)
         record.pop("password_hash", None)
         record["functions"] = json.loads(record.pop("functions_json"))
+        record["permissions"] = json.loads(record.pop("permissions_json", "[]") or "[]")
         return record
 
     def _user_payload(self, record: sqlite3.Row) -> dict:
+        permissions = json.loads(record["permissions_json"] or "[]") if record["permissions_json"] else []
+        admin = record["role"] == "admin"
+        can_edit = lambda area: admin or (record["role"] == "editor" and area in permissions)
         return {
-            "user": record["display_name"], "role": record["role"],
+            "id": record["id"], "user": record["display_name"], "role": record["role"],
             "functions": json.loads(record["functions_json"]),
             "avatar_icon": record["avatar_icon"],
-            "canEditPersonnel": record["role"] == "admin",
-            "canEditDocuments": record["role"] in ("admin", "editor"),
-            "canManageUsers": record["role"] == "admin",
-            "canEditScales": record["role"] == "admin",
-            "canManageNotices": record["role"] in ("admin", "editor"),
+            "permissions": permissions,
+            "canEditTasks": can_edit("tasks"),
+            "canEditPersonnel": can_edit("unit"),
+            "canEditDocuments": can_edit("documents"),
+            "canEditRequirements": can_edit("requirements"),
+            "canEditForceMaps": can_edit("force_maps"),
+            "canEditVacation": can_edit("vacation"),
+            "canManageUsers": admin,
+            "canEditScales": can_edit("scales"),
+            "canManageNotices": admin,
         }
 
     def do_GET(self):
@@ -350,7 +386,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             if not self._require_user():
                 return
             with connect_db() as db:
-                rows = db.execute("SELECT id,display_name,login,role,functions_json,avatar_icon,created_at,updated_at FROM app_users ORDER BY display_name COLLATE NOCASE").fetchall()
+                rows = db.execute("SELECT id,display_name,login,role,functions_json,permissions_json,avatar_icon,created_at,updated_at FROM app_users ORDER BY display_name COLLATE NOCASE").fetchall()
             self._json(200, {"users": [self._user_record(row) for row in rows]})
             return
         if path == "/api/task-categories":
@@ -368,9 +404,23 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             with connect_db() as db:
                 rows = db.execute("""SELECT t.*, r.display_name AS requester, a.display_name AS assignee
                     FROM tasks t JOIN app_users r ON r.id=t.requester_id JOIN app_users a ON a.id=t.assignee_id
-                    WHERE t.requester_id=? OR t.assignee_id=? ORDER BY t.created_at DESC, t.id DESC""",
-                    (current["id"], current["id"])).fetchall()
-            self._json(200, {"tasks": [self._task_record(row) for row in rows]})
+                    ORDER BY t.created_at DESC, t.id DESC""").fetchall()
+                tasks = []
+                for row in rows:
+                    task = self._task_record(row)
+                    assignees = db.execute(
+                        """SELECT u.id, u.display_name FROM task_assignees ta
+                           JOIN app_users u ON u.id=ta.user_id WHERE ta.task_id=?
+                           ORDER BY u.display_name COLLATE NOCASE""",
+                        (row["id"],),
+                    ).fetchall()
+                    if not assignees:
+                        assignees = [{"id": row["assignee_id"], "display_name": row["assignee"]}]
+                    task["assignees"] = [dict(item) for item in assignees]
+                    task["assignee_ids"] = [item["id"] for item in assignees]
+                    task["assignee"] = ", ".join(item["display_name"] for item in assignees)
+                    tasks.append(task)
+            self._json(200, {"tasks": tasks})
             return
         if path == "/api/notices":
             current_user = self._current_user_record()
@@ -408,7 +458,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             if not self._require_user():
                 return
             kind = parse_qs(urlparse(self.path).query).get("kind", [None])[0]
-            if kind not in ("aditamento", "pernoite", "fatd", "prorrogacao"):
+            if kind not in ("aditamento", "pernoite", "fatd", "prorrogacao", "adiantamento13"):
                 self._json(400, {"error": "Selecione a área documental."})
                 return
             with connect_db() as db:
@@ -446,6 +496,8 @@ class SigaseHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         if path == "/api/tasks":
+            if not self._require_area("tasks"):
+                return
             current = self._current_user_record()
             if not current:
                 self._require_user()
@@ -453,27 +505,36 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             body = self._body()
             title, description = body.get("title"), body.get("description", "")
             priority, due_date = body.get("priority"), body.get("due")
+            raw_assignee_ids = body.get("assignee_ids")
+            if raw_assignee_ids is None:
+                raw_assignee_ids = [body.get("assignee_id")]
+            if not isinstance(raw_assignee_ids, list):
+                raw_assignee_ids = []
             try:
-                assignee_id = int(body.get("assignee_id"))
+                assignee_ids = list(dict.fromkeys(int(value) for value in raw_assignee_ids))
             except (TypeError, ValueError):
-                assignee_id = None
+                assignee_ids = []
+            assignee_id = assignee_ids[0] if assignee_ids else None
             try:
                 parsed_due = date.fromisoformat(due_date).isoformat() if isinstance(due_date, str) else None
             except ValueError:
                 parsed_due = None
-            if not isinstance(title, str) or not title.strip() or len(title.strip()) > 100:
-                self._json(400, {"error": "Informe um título com até 100 caracteres."})
+            if not isinstance(title, str) or not title.strip() or len(title.strip()) > 120:
+                self._json(400, {"error": "Informe um título com até 120 caracteres."})
                 return
-            if not isinstance(description, str) or len(description) > 500:
-                self._json(400, {"error": "A descrição deve ter até 500 caracteres."})
+            if not isinstance(description, str) or len(description) > 2000:
+                self._json(400, {"error": "A descrição deve ter até 2.000 caracteres."})
                 return
             if priority not in ("Baixa", "Média", "Alta") or not parsed_due:
                 self._json(400, {"error": "Informe uma prioridade e um prazo válidos."})
                 return
             with connect_db() as db:
-                assignee = db.execute("SELECT id FROM app_users WHERE id=?", (assignee_id,)).fetchone() if assignee_id else None
-                if not assignee:
-                    self._json(400, {"error": "Selecione um responsável válido."})
+                recipients = db.execute(
+                    f"SELECT id,display_name FROM app_users WHERE id IN ({','.join('?' for _ in assignee_ids)}) ORDER BY display_name COLLATE NOCASE" if assignee_ids else "SELECT id,display_name FROM app_users WHERE 1=0",
+                    assignee_ids,
+                ).fetchall()
+                if not assignee_ids or len(recipients) != len(assignee_ids):
+                    self._json(400, {"error": "Selecione ao menos um responsável válido."})
                     return
                 classification = body.get("classification", "")
                 if not isinstance(classification, str):
@@ -484,9 +545,14 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                     (title,description,classification,requester_id,assignee_id,priority,due_date,status,events_json,updated_at)
                     VALUES (?,?,?,?,?,?,?,'Pendente',?,CURRENT_TIMESTAMP)""",
                     (title.strip(), description.strip(), classification[:120], current["id"], assignee_id, priority, parsed_due, json.dumps(events, ensure_ascii=False)))
+                db.executemany("INSERT INTO task_assignees (task_id,user_id) VALUES (?,?)", [(cur.lastrowid, uid) for uid in assignee_ids])
                 row = db.execute("""SELECT t.*, r.display_name AS requester, a.display_name AS assignee
                     FROM tasks t JOIN app_users r ON r.id=t.requester_id JOIN app_users a ON a.id=t.assignee_id WHERE t.id=?""", (cur.lastrowid,)).fetchone()
-            self._json(201, {"task": self._task_record(row)})
+                task = self._task_record(row)
+                task["assignees"] = [dict(item) for item in recipients]
+                task["assignee_ids"] = [item["id"] for item in recipients]
+                task["assignee"] = ", ".join(item["display_name"] for item in recipients)
+            self._json(201, {"task": task})
             return
         if path == "/api/login":
             body = self._body()
@@ -525,7 +591,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             if not current_user:
                 self._require_user()
                 return
-            if current_user["role"] not in ("admin", "editor"):
+            if current_user["role"] != "admin":
                 self._json(403, {"error": "Seu nível de acesso não permite criar avisos."})
                 return
             body = self._body()
@@ -599,8 +665,8 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 return
             try:
                 with connect_db() as db:
-                    cur = db.execute("INSERT INTO app_users (display_name,login,password_hash,role,functions_json,avatar_icon,updated_at) VALUES (?,?,?,?,?,?,CURRENT_TIMESTAMP)", (record["display_name"], record["login"], _password_hash(record["password"]), record["role"], json.dumps(record["functions"], ensure_ascii=False), record["avatar_icon"]))
-                    row = db.execute("SELECT id,display_name,login,role,functions_json,avatar_icon,created_at,updated_at FROM app_users WHERE id=?", (cur.lastrowid,)).fetchone()
+                    cur = db.execute("INSERT INTO app_users (display_name,login,password_hash,role,functions_json,permissions_json,avatar_icon,updated_at) VALUES (?,?,?,?,?,?,?,CURRENT_TIMESTAMP)", (record["display_name"], record["login"], _password_hash(record["password"]), record["role"], json.dumps(record["functions"], ensure_ascii=False), json.dumps(record["permissions"], ensure_ascii=False), record["avatar_icon"]))
+                    row = db.execute("SELECT id,display_name,login,role,functions_json,permissions_json,avatar_icon,created_at,updated_at FROM app_users WHERE id=?", (cur.lastrowid,)).fetchone()
             except sqlite3.IntegrityError:
                 self._json(400, {"error": "Já existe um usuário ou login com esses dados."})
                 return
@@ -634,7 +700,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             self._json(201, {"person": dict(row)})
             return
         if path == "/api/unit-personnel":
-            if not self._require_admin():
+            if not self._require_area("unit"):
                 return
             record, error = self._validate_unit_person(self._body())
             if error:
@@ -654,11 +720,11 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             self._json(201, {"person": self._unit_record(row)})
             return
         if path == "/api/documents":
-            if not self._require_document_editor():
-                return
             record, error = self._validate_document(self._body())
             if error:
                 self._json(400, {"error": error})
+                return
+            if not self._require_area("requirements" if record["kind"] in REQUIREMENT_KINDS else "documents"):
                 return
             try:
                 with connect_db() as db:
@@ -666,15 +732,15 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                     row = db.execute("SELECT * FROM documents WHERE id=?", (cur.lastrowid,)).fetchone()
             except sqlite3.Error as error:
                 print(f"[SIGASE DB] Falha ao criar documento: {error}", flush=True)
-                if record["kind"] == "prorrogacao" and "documents_kind_check" in str(error):
-                    self._json(503, {"error": "O Supabase ainda não aceita requerimentos de prorrogação. Execute a migração supabase/migration_20261019_prorrogacao_documents.sql e tente novamente."})
+                if record["kind"] in REQUIREMENT_KINDS and "documents_kind_check" in str(error):
+                    self._json(503, {"error": "O Supabase ainda não aceita este tipo de requerimento. Execute a migração correspondente em supabase/ e tente novamente."})
                 else:
                     self._json(503, {"error": "Não foi possível salvar o documento no banco de dados. Verifique a conexão com o Supabase e o log do servidor."})
                 return
             self._json(201, {"document": self._document_record(row)})
             return
         if path == "/api/force-maps":
-            if not self._require_document_editor():
+            if not self._require_area("force_maps"):
                 return
             record, error = self._validate_force_map(self._body())
             if error:
@@ -686,7 +752,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             self._json(201, {"map": self._force_map_record(row)})
             return
         if path == "/api/vacation-plan":
-            created_by = self._require_admin()
+            created_by = self._require_area("vacation")
             if not created_by:
                 return
             record, error = self._validate_vacation(self._body())
@@ -703,7 +769,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             self._json(201, {"period": dict(row)})
             return
         if path == "/api/service-scales":
-            if not self._require_admin():
+            if not self._require_area("scales"):
                 return
             record, error = self._validate_scale(self._body())
             if error:
@@ -720,7 +786,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             self._json(201, {"scale": self._scale_record(row, roster)})
             return
         if path.startswith("/api/service-scales/") and path.endswith("/cell"):
-            if not self._require_admin():
+            if not self._require_area("scales"):
                 return
             try:
                 scale_id = int(path.split("/")[-2])
@@ -804,7 +870,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             self._json(200, {"ok": True})
             return
         if path.startswith("/api/service-scales/") and path.endswith("/date-type"):
-            if not self._require_admin():
+            if not self._require_area("scales"):
                 return
             try:
                 scale_id = int(path.split("/")[-2])
@@ -834,7 +900,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             self._json(200, {"ok": True})
             return
         if path.startswith("/api/vacation-plan/") and path.endswith("/task-added"):
-            if not self._require_admin():
+            if not self._require_area("vacation"):
                 return
             try:
                 vacation_id = int(path.split("/")[-2])
@@ -856,6 +922,8 @@ class SigaseHandler(SimpleHTTPRequestHandler):
     def do_PUT(self):
         path = urlparse(self.path).path
         if path.startswith("/api/tasks/"):
+            if not self._require_area("tasks"):
+                return
             current = self._current_user_record()
             if not current:
                 self._require_user()
@@ -870,9 +938,16 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 self._json(400, {"error": "Status de tarefa inválido."})
                 return
             with connect_db() as db:
-                task = db.execute("SELECT * FROM tasks WHERE id=? AND assignee_id=?", (task_id, current["id"])).fetchone()
+                task = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
                 if not task:
-                    self._json(404, {"error": "Tarefa não encontrada para este usuário."})
+                    self._json(404, {"error": "Tarefa não encontrada."})
+                    return
+                assigned = db.execute(
+                    "SELECT 1 FROM task_assignees WHERE task_id=? AND user_id=?",
+                    (task_id, current["id"]),
+                ).fetchone()
+                if not assigned and task["assignee_id"] != current["id"]:
+                    self._json(403, {"error": "Somente um dos responsáveis pode atualizar esta tarefa."})
                     return
                 events = json.loads(task["events_json"] or "[]")
                 if task["status"] == "Concluída":
@@ -906,13 +981,13 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                     return
                 try:
                     if record["password"]:
-                        db.execute("UPDATE app_users SET display_name=?,login=?,password_hash=?,role=?,functions_json=?,avatar_icon=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (record["display_name"], record["login"], _password_hash(record["password"]), record["role"], json.dumps(record["functions"], ensure_ascii=False), record["avatar_icon"], user_id))
+                        db.execute("UPDATE app_users SET display_name=?,login=?,password_hash=?,role=?,functions_json=?,permissions_json=?,avatar_icon=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (record["display_name"], record["login"], _password_hash(record["password"]), record["role"], json.dumps(record["functions"], ensure_ascii=False), json.dumps(record["permissions"], ensure_ascii=False), record["avatar_icon"], user_id))
                     else:
-                        db.execute("UPDATE app_users SET display_name=?,login=?,role=?,functions_json=?,avatar_icon=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (record["display_name"], record["login"], record["role"], json.dumps(record["functions"], ensure_ascii=False), record["avatar_icon"], user_id))
+                        db.execute("UPDATE app_users SET display_name=?,login=?,role=?,functions_json=?,permissions_json=?,avatar_icon=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (record["display_name"], record["login"], record["role"], json.dumps(record["functions"], ensure_ascii=False), json.dumps(record["permissions"], ensure_ascii=False), record["avatar_icon"], user_id))
                 except sqlite3.IntegrityError:
                     self._json(400, {"error": "Já existe um usuário ou login com esses dados."})
                     return
-                row = db.execute("SELECT id,display_name,login,role,functions_json,avatar_icon,created_at,updated_at FROM app_users WHERE id=?", (user_id,)).fetchone()
+                row = db.execute("SELECT id,display_name,login,role,functions_json,permissions_json,avatar_icon,created_at,updated_at FROM app_users WHERE id=?", (user_id,)).fetchone()
             self._json(200, {"user": self._user_record(row)})
             return
         if path.startswith("/api/personnel/"):
@@ -936,7 +1011,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             self._json(200, {"person": dict(row)})
             return
         if path.startswith("/api/unit-personnel/"):
-            if not self._require_admin():
+            if not self._require_area("unit"):
                 return
             try:
                 person_id = int(path.rsplit("/", 1)[1])
@@ -963,8 +1038,6 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             self._json(200, {"person": self._unit_record(row)})
             return
         if path.startswith("/api/documents/"):
-            if not self._require_document_editor():
-                return
             try:
                 document_id = int(path.rsplit("/", 1)[1])
             except ValueError:
@@ -974,14 +1047,23 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             if error:
                 self._json(400, {"error": error})
                 return
+            if not self._require_area("requirements" if record["kind"] in REQUIREMENT_KINDS else "documents"):
+                return
             try:
                 with connect_db() as db:
+                    previous = db.execute("SELECT kind FROM documents WHERE id=?", (document_id,)).fetchone()
+                    if not previous:
+                        self._json(404, {"error": "Documento não encontrado."})
+                        return
+                    previous_area = "requirements" if previous["kind"] in REQUIREMENT_KINDS else "documents"
+                    if not self._require_area(previous_area):
+                        return
                     cur = db.execute("UPDATE documents SET kind=?, bulletin_number=?, document_date=?, data_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (record["kind"], record["bulletin_number"], record["document_date"], json.dumps(record["data"], ensure_ascii=False), document_id))
                     row = db.execute("SELECT * FROM documents WHERE id=?", (document_id,)).fetchone()
             except sqlite3.Error as error:
                 print(f"[SIGASE DB] Falha ao atualizar documento: {error}", flush=True)
-                if record["kind"] == "prorrogacao" and "documents_kind_check" in str(error):
-                    self._json(503, {"error": "O Supabase ainda não aceita requerimentos de prorrogação. Execute a migração supabase/migration_20261019_prorrogacao_documents.sql e tente novamente."})
+                if record["kind"] in REQUIREMENT_KINDS and "documents_kind_check" in str(error):
+                    self._json(503, {"error": "O Supabase ainda não aceita este tipo de requerimento. Execute a migração correspondente em supabase/ e tente novamente."})
                 else:
                     self._json(503, {"error": "Não foi possível atualizar o documento no banco de dados. Verifique a conexão com o Supabase e o log do servidor."})
                 return
@@ -991,7 +1073,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             self._json(200, {"document": self._document_record(row)})
             return
         if path.startswith("/api/force-maps/"):
-            if not self._require_document_editor():
+            if not self._require_area("force_maps"):
                 return
             try:
                 map_id = int(path.rsplit("/", 1)[1])
@@ -1011,7 +1093,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             self._json(200, {"map": self._force_map_record(row)})
             return
         if path.startswith("/api/vacation-plan/"):
-            updated_by = self._require_admin()
+            updated_by = self._require_area("vacation")
             if not updated_by:
                 return
             try:
@@ -1035,7 +1117,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             self._json(200, {"period": dict(row)})
             return
         if path.startswith("/api/service-scales/"):
-            if not self._require_admin():
+            if not self._require_area("scales"):
                 return
             try:
                 scale_id = int(path.rsplit("/", 1)[1])
@@ -1069,7 +1151,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
     def do_DELETE(self):
         path = urlparse(self.path).path
         if path.startswith("/api/tasks/"):
-            if not self._require_admin():
+            if not self._require_area("tasks"):
                 return
             try:
                 task_id = int(path.rsplit("/", 1)[1])
@@ -1084,7 +1166,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             self._json(200, {"ok": True})
             return
         if path.startswith("/api/force-maps/"):
-            if not self._require_document_editor():
+            if not self._require_area("force_maps"):
                 return
             try:
                 map_id = int(path.rsplit("/", 1)[1])
@@ -1099,14 +1181,19 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             self._json(200, {"ok": True})
             return
         if path.startswith("/api/documents/"):
-            if not self._require_document_editor():
-                return
             try:
                 item_id = int(path.rsplit("/", 1)[1])
             except ValueError:
                 self._json(400, {"error": "Identificador inválido."})
                 return
             with connect_db() as db:
+                document = db.execute("SELECT kind FROM documents WHERE id=?", (item_id,)).fetchone()
+                if not document:
+                    self._json(404, {"error": "Documento não encontrado."})
+                    return
+                area = "requirements" if document["kind"] in REQUIREMENT_KINDS else "documents"
+                if not self._require_area(area):
+                    return
                 cur = db.execute("DELETE FROM documents WHERE id=?", (item_id,))
             if not cur.rowcount:
                 self._json(404, {"error": "Documento não encontrado."})
@@ -1114,7 +1201,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             self._json(200, {"ok": True})
             return
         if path.startswith("/api/service-scales/"):
-            if not self._require_admin():
+            if not self._require_area("scales"):
                 return
             try:
                 item_id = int(path.rsplit("/", 1)[1])
@@ -1129,7 +1216,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             self._json(200, {"ok": True})
             return
         if path.startswith("/api/vacation-plan/"):
-            if not self._require_admin():
+            if not self._require_area("vacation"):
                 return
             try:
                 item_id = int(path.rsplit("/", 1)[1])
@@ -1145,7 +1232,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             self._json(200, {"ok": True})
             return
         if path.startswith("/api/unit-personnel/"):
-            if not self._require_admin():
+            if not self._require_area("unit"):
                 return
             try:
                 person_id = int(path.rsplit("/", 1)[1])
@@ -1225,6 +1312,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
         password = data.get("password", "")
         role = data.get("role")
         functions = data.get("functions", [])
+        permissions = data.get("permissions", [])
         avatar_icon = data.get("avatar_icon", "")
         if not isinstance(display_name, str) or not display_name.strip() or len(display_name.strip()) > 80:
             return {}, "Informe o nome do usuário (até 80 caracteres)."
@@ -1234,6 +1322,9 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             return {}, "A senha deve ter de 4 a 128 caracteres."
         if role not in ("viewer", "editor", "admin"):
             return {}, "Selecione um nível de permissão válido."
+        if not isinstance(permissions, list) or any(not isinstance(item, str) or item not in EDIT_AREAS for item in permissions):
+            return {}, "Selecione permissões válidas para as áreas."
+        permissions = list(dict.fromkeys(permissions)) if role == "editor" else []
         if not isinstance(avatar_icon, str) or (avatar_icon and avatar_icon not in ANIMAL_PROFILE_ICONS):
             return {}, "Selecione um ícone de perfil válido."
         if not isinstance(functions, list) or any(not isinstance(item, str) for item in functions):
@@ -1243,7 +1334,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             categories = {row["name"] for row in db.execute("SELECT name FROM task_categories").fetchall()}
         if not set(functions).issubset(categories):
             return {}, "Uma das funções selecionadas não existe mais. Atualize a página."
-        return {"display_name": display_name.strip(), "login": login.strip(), "password": password, "role": role, "functions": functions, "avatar_icon": avatar_icon}, None
+        return {"display_name": display_name.strip(), "login": login.strip(), "password": password, "role": role, "functions": functions, "permissions": permissions, "avatar_icon": avatar_icon}, None
 
     @staticmethod
     def _validate_scale(data: dict) -> tuple[dict, str | None]:
@@ -1474,7 +1565,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
     @staticmethod
     def _validate_document(data: dict) -> tuple[dict, str | None]:
         kind = data.get("kind")
-        if kind not in ("aditamento", "pernoite", "fatd", "prorrogacao"):
+        if kind not in ("aditamento", "pernoite", "fatd", "prorrogacao", "adiantamento13"):
             return {}, "Tipo documental inválido."
         number = data.get("bulletin_number")
         if not isinstance(number, str) or not number.strip() or len(number.strip()) > 30:
@@ -1508,6 +1599,8 @@ class SigaseHandler(SimpleHTTPRequestHandler):
         record["created"] = record.pop("created_at")
         record.pop("updated_at", None)
         record["events"] = json.loads(record.pop("events_json") or "[]")
+        completions = [event for event in record["events"] if event and event[0] == "Concluída"]
+        record["completed_by"] = completions[-1][1] if completions else None
         return record
 
     def _notice_payload(self, row: sqlite3.Row, current_user: sqlite3.Row) -> dict:
@@ -1525,9 +1618,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
         notice["all_acknowledged"] = bool(recipients) and all(item["acknowledged_at"] for item in recipients)
         notice["recipient_count"] = len(recipients)
         notice["acknowledged_count"] = sum(bool(item["acknowledged_at"]) for item in recipients)
-        notice["can_manage"] = current_user["role"] == "admin" or (
-            current_user["role"] == "editor" and notice["created_by"].casefold() == current_user["display_name"].casefold()
-        )
+        notice["can_manage"] = current_user["role"] == "admin"
         return notice
 
     @staticmethod

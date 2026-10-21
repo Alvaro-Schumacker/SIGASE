@@ -1,4 +1,4 @@
-# SIGASE 1.0.4
+# SIGASE 1.0.5
 
 Aplicação executada localmente, com dados cadastrais e registros do sistema armazenados em um banco PostgreSQL no Supabase. O navegador conversa somente com o servidor Python local; a connection string do banco fica no backend e não é enviada ao navegador.
 
@@ -16,6 +16,14 @@ O schema cria as tabelas e índices do sistema, incluindo a tabela `tasks` para 
 Esta versão adiciona número militar e posição de antiguidade ao efetivo. Em um projeto Supabase já existente, execute manualmente `supabase/migration_20261019_unit_personnel_seniority.sql` no SQL Editor antes de iniciar o SIGASE atualizado. A migração preenche uma ordem inicial por nome dentro de cada graduação; revise as posições no cadastro para refletir a antiguidade real. Nenhuma alteração foi aplicada diretamente ao seu projeto Supabase.
 
 Os perfis de usuário agora aceitam um ícone de animal. Em um projeto Supabase já existente, execute também `supabase/migration_user_avatar_icon.sql` no SQL Editor. Os sete ícones de perfil ficam em `assets/icons/animals/`; ícones do menu ficam em `assets/icons/menu/`, e logotipo e favicon em `assets/brand/`.
+
+### Permissões por área
+
+A versão atual separa Visitante (visualização), Editor (edição nas áreas marcadas no perfil) e Administrador (acesso total e gerenciamento de usuários). Antes de iniciar esta versão em um projeto Supabase existente, execute `supabase/migration_user_area_permissions.sql` no SQL Editor. A migração mantém aos editores existentes permissões iniciais para Tarefas, Documentos e Requerimentos; o administrador pode ajustar as áreas depois. Nenhuma alteração é feita diretamente no seu banco.
+
+### Tarefas para vários usuários
+
+Para permitir vários responsáveis por tarefa em um projeto Supabase existente, execute `supabase/migration_multiple_task_assignees.sql` no SQL Editor antes de iniciar o servidor atualizado. Ela cria a relação de responsáveis e preserva os responsáveis das tarefas existentes. Quando qualquer responsável concluir uma tarefa, o status compartilhado é atualizado e ela deixa a aba Recebidas dos demais responsáveis.
 
 ### Ano de referência do plano de férias
 
@@ -64,5 +72,7 @@ Antes de usar dados pessoais, ajuste a senha padrão, configure cópias de segur
 ### Requerimentos no Supabase existente
 
 Para habilitar o tipo documental Prorrogação de tempo de serviço em um projeto já criado, execute manualmente supabase/migration_20261019_prorrogacao_documents.sql no SQL Editor do Supabase. A migração apenas amplia os tipos aceitos pela tabela documents; não altera nem remove os documentos existentes. O SIGASE informa no navegador quando essa migração ainda não foi aplicada.
+
+O requerimento de Adiantamento de 13º salário também utiliza a tabela `documents`. Em projeto Supabase existente, execute `supabase/migration_adiantamento13_documents.sql` no SQL Editor antes de salvar o novo tipo documental. O formulário usa os dados do efetivo da unidade e mantém editáveis o número EB, a parcela, o ano e mês de férias e o nome do comandante.
 
 - Requerimentos arquivados por ano e por categoria de posto/graduação.

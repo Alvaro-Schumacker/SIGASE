@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#263b2d"><title>SIGASE | Gestão administrativa</title>
-  <link rel="icon" type="image/png" href="/assets/brand/sigase-favicon.png?v=20261020-02"><style>.hidden{display:none!important}</style><link rel="stylesheet" href="/styles.css?v=20261020-03">
+  <link rel="icon" type="image/png" href="/assets/brand/sigase-favicon.png?v=20261020-02"><style>.hidden{display:none!important}</style><link rel="stylesheet" href="/styles.css?v=20261020-04">
 </head>
 <body>
   <main id="login" class="login-screen">
@@ -49,7 +49,7 @@
             <section class="dashboard-panel vacation-dashboard-panel"><div class="section-head"><div><h2>Férias próximas</h2><p class="muted">Inícios e apresentações do efetivo</p></div><button class="text-button" data-view-link="vacation">Ver plano <span>→</span></button></div><div id="dashboard-vacations" class="dashboard-vacation-list"></div></section>
           </div>
         </div>
-        <footer class="app-footer"><span>Criado por Álvaro</span><span>Versão 1.0.4</span></footer>
+        <footer class="app-footer"><span>Criado por Álvaro</span><span>Versão 1.0.5</span></footer>
       </section>
       <section id="inbox-view" class="page-view hidden">
         <div class="page-heading"><div><p class="eyebrow">DEMANDAS DA EQUIPE</p><h1>Caixa de entrada</h1><p class="muted">Organize, acompanhe e conclua as tarefas da seção.</p></div><button id="create-inbox" class="button primary">＋ Nova tarefa</button></div>
@@ -74,7 +74,7 @@
       <section id="documents-view" class="page-view hidden">
         <div class="page-heading"><div><p id="document-page-eyebrow" class="eyebrow">DOCUMENTOS DE SERVIÇO</p><h1 id="document-page-title">Aditamentos e pernoites</h1><p id="document-page-subtitle" class="muted">Preencha, arquive, revise e imprima os documentos diários.</p></div></div>
         <div id="document-kinds" class="document-kinds"><button class="document-kind active" data-kind="aditamento"><span>01</span><strong>Aditamento</strong><small>Expediente da seção</small></button><button class="document-kind" data-kind="pernoite"><span>02</span><strong>Pernoite</strong><small>Todos os dias</small></button><button class="document-kind" data-kind="fatd"><span>03</span><strong>FATD</strong><small>Apuração disciplinar</small></button></div>
-        <div id="requirement-kinds" class="document-kinds hidden"><button class="document-kind active" data-kind="prorrogacao"><span>01</span><strong>Prorrogação de tempo de serviço</strong><small>Requerimento e informação em três páginas</small></button></div>
+        <div id="requirement-kinds" class="document-kinds hidden"><button class="document-kind active" data-kind="prorrogacao"><span>01</span><strong>Prorrogação de tempo de serviço</strong><small>Requerimento e informação em três páginas</small></button><button class="document-kind" data-kind="adiantamento13"><span>02</span><strong>Adiantamento de 13º salário</strong><small>Requerimento em uma página</small></button></div>
         <div class="document-area-head"><div><h2 id="document-area-title">Aditamentos</h2><p id="document-area-subtitle" class="muted">Registro diário em dias de expediente.</p></div><button id="new-document" class="button primary hidden">＋ Novo aditamento</button></div>
         <div class="archive-label">DOCUMENTOS SALVOS</div><div id="document-list" class="document-list"></div>
       </section>
@@ -106,5 +106,5 @@
   <div id="modal-layer" class="modal-layer hidden"><section id="modal" class="modal" role="dialog" aria-modal="true"></section></div>
   <div id="network-loading" class="network-loading hidden" role="status" aria-live="polite"><div class="network-loading-card"><span class="loading-spinner" aria-hidden="true"></span><strong>Sincronizando…</strong></div></div>
   <div id="toast" class="toast"></div>
-  <script src="/app.js?v=20261020-05"></script>
+  <script src="/app.js?v=20261020-09"></script>
 </body></html>
