@@ -9,6 +9,7 @@ import re
 import secrets
 import sqlite3
 import time
+import threading
 import unicodedata
 from datetime import date, datetime, timezone
 from http.cookies import SimpleCookie
@@ -23,7 +24,8 @@ ID_TABLES = {"app_users", "task_categories", "tasks", "personnel", "unit_personn
 SCALE_SWAP_PREFIX = "__TROCA_SERVICO__::"
 SCALE_EXCLUDED_PREFIX = "__FORA_ESCALA__::"
 SCALE_REST_PREFIX = "__FOLGA_MANUAL__::"
-ANIMAL_PROFILE_ICONS = {"01_cervo.png", "02_cao.png", "03_coelho.png", "04_cabra.png", "05_lobo.png", "06_lebre.png", "07_touro.png"}
+PROFILE_ICONS = {"01_soldado_camuflado.png", "02_soldado_tatico.png", "03_oficial_marinha.png", "04_oficial_marinha_branca.png", "05_soldado_mascara_gas.png", "06_atirador_furtivo.png", "07_soldado_colete.png", "08_soldado_infantaria.png", "09_operador_noturno.png", "10_policial.png", "11_tanque.png", "12_helicoptero.png", "13_caca.png", "14_navio.png", "15_obus.png", "16_cao_militar.png", "17_paraquedas.png", "18_medalha.png", "19_mapa.png", "20_radio_e_binomio.png"}
+REQUEST_ACTOR = threading.local()
 EDIT_AREAS = {"tasks", "unit", "scales", "documents", "requirements", "force_maps", "vacation"}
 REQUIREMENT_KINDS = {"prorrogacao", "adiantamento13"}
 
@@ -182,6 +184,7 @@ def connect_db() -> PostgresConnection:
         import psycopg
         from psycopg.rows import dict_row
         connection = psycopg.connect(database_url, sslmode="require", prepare_threshold=None, row_factory=dict_row)
+        connection.execute("SELECT set_config('sigase.actor_id', %s, true), set_config('sigase.actor_name', %s, true)", (getattr(REQUEST_ACTOR, "user_id", ""), getattr(REQUEST_ACTOR, "display_name", "")), prepare=False)
         return PostgresConnection(connection, psycopg)
     except ImportError as error:
         raise sqlite3.DatabaseError("Dependência ausente. Instale com: python -m pip install -r requirements.txt") from error
@@ -296,8 +299,10 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 return None
             token_hash = hashlib.sha256(session_cookie.value.encode("utf-8")).hexdigest()
             with connect_db() as db:
-                return db.execute("SELECT u.* FROM app_users u JOIN user_sessions s ON s.user_id=u.id WHERE s.token_hash=? AND s.expires_at>CURRENT_TIMESTAMP", (token_hash,)).fetchone()
-            return None
+                record = db.execute("SELECT u.* FROM app_users u JOIN user_sessions s ON s.user_id=u.id WHERE s.token_hash=? AND s.expires_at>CURRENT_TIMESTAMP", (token_hash,)).fetchone()
+            REQUEST_ACTOR.user_id = str(record["id"]) if record else ""
+            REQUEST_ACTOR.display_name = record["display_name"] if record else ""
+            return record
         except (AttributeError, KeyError, sqlite3.Error):
             return None
 
@@ -397,6 +402,18 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                     (current["id"], version),
                 ).fetchone()
             self._json(200, {"acknowledged": bool(row)})
+            return
+        if path == "/api/history":
+            if not self._require_admin():
+                return
+            try:
+                with connect_db() as db:
+                    rows = db.execute("SELECT id,actor_name,action,entity,entity_label,created_at FROM audit_log ORDER BY created_at DESC,id DESC LIMIT 250").fetchall()
+                    online = db.execute("SELECT u.id,u.display_name,u.avatar_icon,s.last_seen FROM user_sessions s JOIN app_users u ON u.id=s.user_id WHERE s.expires_at>CURRENT_TIMESTAMP AND s.last_seen>CURRENT_TIMESTAMP-INTERVAL '2 minutes' GROUP BY u.id,u.display_name,u.avatar_icon,s.last_seen ORDER BY u.display_name COLLATE NOCASE").fetchall()
+                self._json(200, {"entries": [dict(row) for row in rows], "online": [dict(row) for row in online]})
+            except sqlite3.Error as error:
+                print(f"[SIGASE DB] Falha ao carregar histórico: {error}", flush=True)
+                self._json(503, {"error": "Execute a migração de histórico do Supabase para habilitar esta página."})
             return
         if path == "/api/users":
             if not self._require_user():
@@ -500,7 +517,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 return
             with connect_db() as db:
                 rows = db.execute("SELECT * FROM duty_scales ORDER BY name COLLATE NOCASE").fetchall()
-                roster = {row["id"]: dict(row) for row in db.execute("SELECT id, full_name, war_name, rank FROM unit_personnel").fetchall()}
+                roster = {row["id"]: dict(row) for row in db.execute("SELECT id, full_name, war_name, rank, military_number FROM unit_personnel").fetchall()}
             scales = [self._scale_record(row, roster) for row in rows]
             self._json(200, {"scales": scales})
             return
@@ -511,6 +528,18 @@ class SigaseHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if path == "/api/heartbeat":
+            current = self._current_user_record()
+            if not current:
+                self._require_user()
+                return
+            cookie = SimpleCookie(); cookie.load(self.headers.get("Cookie", ""))
+            token = cookie.get("sigase_session")
+            token_hash = hashlib.sha256(token.value.encode("utf-8")).hexdigest() if token else ""
+            with connect_db() as db:
+                db.execute("UPDATE user_sessions SET last_seen=CURRENT_TIMESTAMP WHERE token_hash=? AND user_id=?", (token_hash, current["id"]))
+            self._json(200, {"ok": True})
+            return
         if path == "/api/tasks":
             if not self._require_area("tasks"):
                 return
@@ -1357,7 +1386,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
         if not isinstance(permissions, list) or any(not isinstance(item, str) or item not in EDIT_AREAS for item in permissions):
             return {}, "Selecione permissões válidas para as áreas."
         permissions = list(dict.fromkeys(permissions)) if role == "editor" else []
-        if not isinstance(avatar_icon, str) or (avatar_icon and avatar_icon not in ANIMAL_PROFILE_ICONS):
+        if not isinstance(avatar_icon, str) or (avatar_icon and avatar_icon not in PROFILE_ICONS):
             return {}, "Selecione um ícone de perfil válido."
         if not isinstance(functions, list) or any(not isinstance(item, str) for item in functions):
             return {}, "Selecione funções/classificações válidas."

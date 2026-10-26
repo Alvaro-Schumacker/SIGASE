@@ -1,4 +1,4 @@
-# SIGASE 1.0.6
+# SIGASE 1.1.0
 
 Aplicação executada localmente, com dados cadastrais e registros do sistema armazenados em um banco PostgreSQL no Supabase. O navegador conversa somente com o servidor Python local; a connection string do banco fica no backend e não é enviada ao navegador.
 

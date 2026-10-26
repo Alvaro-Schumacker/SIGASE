@@ -2,8 +2,8 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#263b2d"><title>SIGASE | Gestão administrativa</title>
-  <link rel="icon" type="image/png" href="/assets/brand/sigase-favicon.png?v=20261020-02"><style>.hidden{display:none!important}</style><link rel="stylesheet" href="/styles.css?v=20261021-02">
+  <meta name="theme-color" content="#151817"><title>SIGASE | Gestão administrativa</title>
+  <link rel="icon" type="image/png" href="/assets/brand/sigase-favicon.png?v=20261020-02"><style>.hidden{display:none!important}</style><link rel="stylesheet" href="/styles.css?v=20261026-02">
 </head>
 <body>
   <main id="login" class="login-screen">
@@ -21,7 +21,7 @@
   </main>
   <div id="app" class="app-shell hidden">
     <aside class="sidebar">
-      <div class="side-brand side-brand-logo"><img src="/assets/brand/sigase-logo.png" alt="SIGASE — Gestão administrativa da seção"></div>
+      <div id="user-chip" class="user-chip side-user-card"><div id="user-avatar" class="avatar">AD</div><div class="side-user-copy"><strong id="user-name">Administrador</strong></div><button id="logout-button" class="icon-button" title="Sair" aria-label="Sair">↪</button></div>
       <div class="side-label">MENU</div>
       <button class="nav-item active" data-view="dashboard"><span class="nav-icon"><img src="/assets/icons/menu/pagina-inicial.png" alt=""></span> Página Inicial</button>
       <button class="nav-item" data-view="inbox"><span class="nav-icon"><img src="/assets/icons/menu/caixa-de-entrada.png" alt=""></span> Caixa de entrada <b id="inbox-badge" class="nav-badge"></b></button>
@@ -33,25 +33,24 @@
       <button class="nav-item" data-view="force-maps"><span class="nav-icon"><img src="/assets/icons/menu/mapas-da-forca.png" alt=""></span> Mapas da força</button>
       <button class="nav-item" data-view="vacation"><span class="nav-icon"><img src="/assets/icons/menu/plano-de-ferias.png" alt=""></span> Plano de férias</button>
       <button class="nav-item" data-view="personnel"><span class="nav-icon"><img src="/assets/icons/menu/usuarios.png" alt=""></span> Usuários</button>
+      <button class="nav-item hidden" id="history-nav" data-view="history"><span class="nav-icon">◷</span> Histórico</button>
       <div class="side-label section-label">AMBIENTE</div>
       <div class="prototype-tag"><span></span> Sistema local</div>
-      <div class="side-bottom"><div id="user-chip" class="user-chip"><div id="user-avatar" class="avatar">AD</div><div><strong id="user-name">Administrador</strong><small>Usuário</small></div><button id="logout-button" class="icon-button" title="Sair" aria-label="Sair">↪</button></div></div>
     </aside>
     <button id="mobile-menu-backdrop" class="mobile-menu-backdrop" type="button" aria-label="Fechar menu"></button>
     <main class="main-area">
-      <header class="topbar"><button id="mobile-menu-toggle" class="mobile-menu-toggle" type="button" aria-label="Abrir menu" aria-expanded="false">☰</button><div class="breadcrumb">SIGASE <span>/</span> <strong id="crumb">Página Inicial</strong></div><div class="top-actions"><span class="today" id="today"></span><button id="create-top" class="button primary">＋ Nova tarefa</button></div></header>
+      <header class="topbar"><button id="mobile-menu-toggle" class="mobile-menu-toggle" type="button" aria-label="Abrir menu" aria-expanded="false">☰</button><div class="breadcrumb"><span>SIGASE</span><span>/</span><strong id="crumb">Página Inicial</strong></div><div class="top-actions"><div class="release-note-menu"><button id="release-note-toggle" class="icon-button release-note-toggle" type="button" aria-label="Notas da versão" aria-expanded="false" title="Notas da versão"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg><i id="release-note-dot" class="release-note-dot hidden"></i></button><section id="release-note-popover" class="release-note-popover hidden" role="dialog" aria-label="Notas da versão"><div id="release-note-content"></div></section></div><button id="create-top" class="button primary">＋ Nova tarefa</button><img class="topbar-logo" src="/assets/brand/sigase-logo.png" alt="SIGASE — Gestão administrativa da seção"></div></header>
       <section id="dashboard-view" class="page-view">
-        <div class="page-heading"><div><p class="eyebrow">ACOMPANHAMENTO DA SEÇÃO</p><h1>Página Inicial</h1><p class="muted">Acompanhe as demandas e os prazos da equipe.</p></div><div class="heading-note"><span class="pulse"></span> Ambiente local</div></div>
-        <section id="release-note-banner" class="release-note-banner hidden" aria-live="polite"></section>
+        <div class="dashboard-greeting-block"><div class="dashboard-greeting-copy"><h1 id="dashboard-greeting"></h1><p>Resumo operacional · <time id="today"></time></p></div><button id="dashboard-panel-switch" class="dashboard-switch-button" type="button" aria-pressed="false">Abrir agenda <span>+</span></button></div>
         <div id="stats" class="stats-grid"></div>
         <div class="dashboard-columns">
           <section class="dashboard-panel dashboard-task-panel"><div class="section-head"><div><h2>Próximas providências</h2><p class="muted">Tarefas recentes e prazos da equipe</p></div><button class="text-button" id="all-tasks">Ver todas <span>→</span></button></div><div id="recent-list" class="task-list"></div></section>
           <div class="dashboard-side-column">
-            <section class="dashboard-panel notice-dashboard-panel"><div class="section-head"><div><h2>Avisos</h2><p class="muted">Lembretes próximos para você</p></div><button class="text-button" data-view-link="notices">Ver todos <span>→</span></button></div><div id="dashboard-notices" class="notice-list"></div></section>
-            <section class="dashboard-panel vacation-dashboard-panel"><div class="section-head"><div><h2>Férias próximas</h2><p class="muted">Inícios e apresentações do efetivo</p></div><button class="text-button" data-view-link="vacation">Ver plano <span>→</span></button></div><div id="dashboard-vacations" class="dashboard-vacation-list"></div></section>
+            <div id="dashboard-notice-view" class="dashboard-side-content"><section class="dashboard-panel notice-dashboard-panel"><div class="section-head"><div><h2>Avisos</h2><p class="muted">Lembretes próximos para você</p></div><button class="text-button" data-view-link="notices">Ver todos <span>→</span></button></div><div id="dashboard-notices" class="notice-list"></div></section><section class="dashboard-panel vacation-dashboard-panel"><div class="section-head"><div><h2>Férias próximas</h2><p class="muted">Inícios e apresentações do efetivo</p></div><button class="text-button" data-view-link="vacation">Ver plano <span>→</span></button></div><div id="dashboard-vacations" class="dashboard-vacation-list"></div></section></div>
+            <div id="dashboard-agenda-view" class="dashboard-side-content dashboard-agenda-view hidden"><section class="dashboard-calendar-panel"><div class="dashboard-calendar-head"><div><p class="eyebrow">AGENDA</p><h2 id="dashboard-calendar-month"></h2></div><div class="dashboard-calendar-controls"><button class="icon-button" id="dashboard-calendar-prev" aria-label="Mês anterior">‹</button><button class="icon-button" id="dashboard-calendar-today" aria-label="Ir para hoje">Hoje</button><button class="icon-button" id="dashboard-calendar-next" aria-label="Próximo mês">›</button></div></div><div id="dashboard-calendar-grid" class="dashboard-calendar-grid"></div><div class="dashboard-calendar-legend"><span><i class="legend-task"></i>Tarefa</span><span><i class="legend-notice"></i>Aviso</span><span><i class="legend-leave"></i>Férias</span></div></section><section class="dashboard-panel dashboard-day-agenda"><div class="section-head"><div><h2 id="dashboard-day-agenda-title">Agenda do dia</h2><p class="muted">Avisos, tarefas e eventos</p></div></div><div id="dashboard-day-agenda-list" class="dashboard-day-agenda-list"></div></section></div>
           </div>
         </div>
-        <footer class="app-footer"><span>Criado por Álvaro</span><span>Versão 1.0.6</span></footer>
+        <footer class="app-footer"><span>Criado por Álvaro</span><span>Versão 1.1.0</span></footer>
       </section>
       <section id="inbox-view" class="page-view hidden">
         <div class="page-heading"><div><p class="eyebrow">DEMANDAS DA EQUIPE</p><h1>Caixa de entrada</h1><p class="muted">Organize, acompanhe e conclua as tarefas da seção.</p></div><button id="create-inbox" class="button primary">＋ Nova tarefa</button></div>
@@ -62,6 +61,10 @@
         <div class="page-heading"><div><p class="eyebrow">COMUNICAÇÃO DA EQUIPE</p><h1>Avisos</h1><p class="muted">Lembretes enviados aos usuários selecionados. Cada pessoa confirma individualmente.</p></div><button id="new-notice" class="button primary hidden">＋ Novo aviso</button></div>
         <div class="privacy-note"><strong>Como funciona:</strong> o aviso aparece na Visão geral dois dias antes da data. Ao marcar “Ciente”, ele some da sua visão geral; o aviso só é concluído quando todos os destinatários confirmarem.</div>
         <div id="notices-list" class="notice-list"></div>
+      </section>
+      <section id="history-view" class="page-view hidden">
+        <div class="page-heading"><div><p class="eyebrow">AUDITORIA ADMINISTRATIVA</p><h1>Histórico</h1><p class="muted">Alterações registradas no SIGASE, organizadas por dia.</p></div><button id="history-refresh" class="button secondary">Atualizar</button></div>
+        <div class="history-layout"><section class="dashboard-panel history-entries-panel"><div id="history-entries"></div></section><aside class="dashboard-panel history-online-panel"><div class="section-head"><div><h2>Usuários online</h2><p class="muted">Atividade nos últimos 2 minutos</p></div><span id="history-online-count" class="history-online-count">0</span></div><div id="history-online-users"></div></aside></div>
       </section>
       <section id="personnel-view" class="page-view hidden">
         <div class="page-heading"><div><p class="eyebrow">USUÁRIOS DO SISTEMA</p><h1>Usuários</h1><p class="muted">Gerencie usuários, níveis de acesso e funções responsáveis por cada classificação.</p></div><div class="team-actions"><button id="manage-categories" class="button secondary hidden">Gerenciar funções</button><button id="add-person" class="button primary hidden">＋ Adicionar usuário</button></div></div>
@@ -108,5 +111,5 @@
   <div id="modal-layer" class="modal-layer hidden"><section id="modal" class="modal" role="dialog" aria-modal="true"></section></div>
   <div id="network-loading" class="network-loading hidden" role="status" aria-live="polite"><div class="network-loading-card"><span class="loading-spinner" aria-hidden="true"></span><strong>Sincronizando…</strong></div></div>
   <div id="toast" class="toast"></div>
-  <script src="/app.js?v=20261021-08"></script>
+  <script src="/app.js?v=20261024-03"></script>
 </body></html>
