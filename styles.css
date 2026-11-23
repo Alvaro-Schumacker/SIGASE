@@ -582,3 +582,7 @@ input,select,textarea,.filters select,.search-box{background:#252c28!important;c
 #modal .button.secondary,#modal .adit-fill-button,#modal .remove-row{background:#303a34!important;border:1px solid #465249!important;color:#c0c99a!important}
 #modal .remove-row{color:#d58a80!important}
 #modal .button.secondary:hover,#modal .adit-fill-button:hover,#modal .remove-row:hover{background:#3b453f!important}
+
+/* Ícones do menu: elimina o fundo preto dos PNGs sem criar blocos brancos. */
+.nav-item .nav-icon img{mix-blend-mode:screen!important;filter:none!important;opacity:1}
+.nav-item.active .nav-icon img{mix-blend-mode:screen!important;filter:none!important}
