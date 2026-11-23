@@ -15,9 +15,73 @@ from datetime import date, datetime, timezone
 from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
+import posixpath
 
 BASE_DIR = Path(__file__).resolve().parent
+IS_HOSTED = "PORT" in os.environ
+# Only these files (plus anything under /assets/) are served as static content.
+# Everything else in the project folder (.env, server.py, .git, backups) stays private.
+STATIC_FILES = {"/": "/index.html", "/index.html": "/index.html", "/app.js": "/app.js", "/styles.css": "/styles.css"}
+STATIC_PREFIXES = ("/assets/",)
+LOGIN_MAX_FAILURES = 5
+LOGIN_WINDOW_SECONDS = 15 * 60
+LOGIN_LOCK_SECONDS = 15 * 60
+LOGIN_IP_MAX_FAILURES = 30
+PASSWORD_MIN_LENGTH = 8
+COMMON_WEAK_PASSWORDS = {"0000", "00000000", "1234", "12345", "123456", "1234567", "12345678", "123456789", "senha", "senha123", "password", "admin", "admin123", "sigase", "sigase123", "qwerty", "11111111"}
+PASSWORD_CHANGE_EXEMPT = {"/api/me", "/api/me/password", "/api/login", "/api/logout", "/api/heartbeat"}
+
+
+def _password_problem(password: str, login: str = "") -> str | None:
+    """Return a user-facing reason if the password is too weak, else None."""
+    if not isinstance(password, str) or not PASSWORD_MIN_LENGTH <= len(password) <= 128:
+        return f"A senha deve ter de {PASSWORD_MIN_LENGTH} a 128 caracteres."
+    lowered = password.casefold()
+    if lowered in COMMON_WEAK_PASSWORDS or (login and lowered == login.strip().casefold()) or len(set(password)) <= 2:
+        return "Escolha uma senha menos previsível (não use o login, sequências ou repetições)."
+    return None
+
+
+class LoginThrottle:
+    """In-memory brute-force protection: locks a login/IP pair after repeated failures."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._failures: dict[tuple, list[float]] = {}
+        self._locked_until: dict[tuple, float] = {}
+
+    def _prune(self, key, now):
+        recent = [stamp for stamp in self._failures.get(key, []) if now - stamp < LOGIN_WINDOW_SECONDS]
+        if recent:
+            self._failures[key] = recent
+        else:
+            self._failures.pop(key, None)
+        return recent
+
+    def retry_after(self, ip: str, login: str) -> int:
+        now = time.monotonic()
+        with self._lock:
+            waits = [self._locked_until.get(key, 0) - now for key in (("pair", ip, login), ("ip", ip))]
+            wait = max(waits)
+            return int(wait) + 1 if wait > 0 else 0
+
+    def failure(self, ip: str, login: str) -> None:
+        now = time.monotonic()
+        with self._lock:
+            for key, limit in ((("pair", ip, login), LOGIN_MAX_FAILURES), (("ip", ip), LOGIN_IP_MAX_FAILURES)):
+                self._failures.setdefault(key, []).append(now)
+                if len(self._prune(key, now)) >= limit:
+                    self._locked_until[key] = now + LOGIN_LOCK_SECONDS
+                    self._failures.pop(key, None)
+
+    def success(self, ip: str, login: str) -> None:
+        with self._lock:
+            self._failures.pop(("pair", ip, login), None)
+            self._locked_until.pop(("pair", ip, login), None)
+
+
+LOGIN_THROTTLE = LoginThrottle()
 UNIT_RANKS = ("Cap", "1º Ten", "2º Ten", "STen", "1º Sgt", "2º Sgt", "3º Sgt", "Cb EP", "Sd EP", "Sd EV")
 PASSWORD_ITERATIONS = 180_000
 ID_TABLES = {"app_users", "task_categories", "tasks", "personnel", "unit_personnel", "documents", "force_maps", "vacation_plan", "duty_scales", "notices"}
@@ -63,6 +127,9 @@ def _verify_password(password: str, encoded: str) -> bool:
         return hmac.compare_digest(actual, expected)
     except (ValueError, TypeError):
         return False
+
+
+_DUMMY_PASSWORD_HASH = _password_hash(secrets.token_urlsafe(16))
 
 
 def _normalize_function(value: str) -> str:
@@ -214,7 +281,7 @@ def initialize_db() -> None:
                 db.executemany("INSERT INTO task_categories (name) VALUES (?) ON CONFLICT DO NOTHING", [(name,) for name in ("Férias", "Aditamentos", "Pernoites")])
                 if db.execute("SELECT COUNT(*) AS count FROM app_users").fetchone()["count"] == 0:
                     db.execute(
-                        "INSERT INTO app_users (display_name,login,password_hash,role,functions_json) VALUES (?,?,?,?,?)",
+                        "INSERT INTO app_users (display_name,login,password_hash,role,functions_json,must_change_password) VALUES (?,?,?,?,?,TRUE)",
                         ("Administrador", "0000", _password_hash("0000"), "admin", "[]"),
                     )
             return
@@ -265,7 +332,92 @@ class SigaseHandler(SimpleHTTPRequestHandler):
     def end_headers(self):
         if not urlparse(self.path).path.startswith("/api/"):
             self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "same-origin")
+        if IS_HOSTED:
+            self.send_header("Strict-Transport-Security", "max-age=31536000")
         super().end_headers()
+
+    # --- request dispatch -------------------------------------------------
+
+    def _begin_request(self) -> bool:
+        """Reset per-request state and apply global gates. Returns False if the request was answered."""
+        self._user_cache = None
+        self._user_cache_loaded = False
+        path = urlparse(self.path).path
+        if path.startswith("/api/") and path not in PASSWORD_CHANGE_EXEMPT:
+            record = self._current_user_record()
+            if record and record.get("must_change_password"):
+                self._json(403, {"error": "Altere sua senha para continuar.", "code": "password_change_required"})
+                return False
+        return True
+
+    def do_GET(self):
+        if self._begin_request():
+            self._handle_get()
+
+    def do_HEAD(self):
+        if self._static_target() is None:
+            self.send_error(404)
+            return
+        super().do_HEAD()
+
+    def do_POST(self):
+        if self._begin_request():
+            self._handle_post()
+
+    def do_PUT(self):
+        if self._begin_request():
+            self._handle_put()
+
+    def do_DELETE(self):
+        if self._begin_request():
+            self._handle_delete()
+
+    def _static_target(self) -> str | None:
+        """Map a request path to an allowed static file path, or None if it must not be served."""
+        raw = urlparse(self.path).path
+        decoded = posixpath.normpath(unquote(raw))
+        if raw.endswith("/") and raw != "/":
+            return None
+        if decoded in STATIC_FILES:
+            return STATIC_FILES[decoded]
+        if decoded.startswith(STATIC_PREFIXES):
+            parts = decoded.split("/")
+            if any(part.startswith(".") for part in parts if part) or not (BASE_DIR / decoded.lstrip("/")).is_file():
+                return None
+            return decoded
+        return None
+
+    def _serve_static(self) -> None:
+        target = self._static_target()
+        if target is None:
+            self._json(404, {"error": "Arquivo não encontrado."})
+            return
+        query = urlparse(self.path).query
+        self.path = target + (f"?{query}" if query else "")
+        super().do_GET()
+
+    def _client_ip(self) -> str:
+        if IS_HOSTED:
+            forwarded = self.headers.get("X-Forwarded-For", "")
+            if forwarded:
+                return forwarded.split(",")[0].strip()
+        return self.client_address[0]
+
+    def _session_cookie(self, token: str, max_age: int) -> str:
+        secure = IS_HOSTED or self.headers.get("X-Forwarded-Proto", "").lower() == "https"
+        return f"sigase_session={token}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Strict" + ("; Secure" if secure else "")
+
+    def _session_token_hash(self) -> str:
+        cookie = SimpleCookie()
+        try:
+            cookie.load(self.headers.get("Cookie", ""))
+        except Exception:
+            return ""
+        token = cookie.get("sigase_session")
+        return hashlib.sha256(token.value.encode("utf-8")).hexdigest() if token else ""
 
     def _json(self, status: int, payload: dict, headers: dict | None = None) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -290,21 +442,23 @@ class SigaseHandler(SimpleHTTPRequestHandler):
         record = self._current_user_record()
         return record["display_name"] if record else None
 
-    def _current_user_record(self):
-        cookie = SimpleCookie()
+    def _current_user_record(self, refresh: bool = False):
+        # Cached for the duration of a single request: several permission checks
+        # used to open a new Supabase connection each.
+        if getattr(self, "_user_cache_loaded", False) and not refresh:
+            return self._user_cache
+        record = None
         try:
-            cookie.load(self.headers.get("Cookie", ""))
-            session_cookie = cookie.get("sigase_session")
-            if not session_cookie:
-                return None
-            token_hash = hashlib.sha256(session_cookie.value.encode("utf-8")).hexdigest()
-            with connect_db() as db:
-                record = db.execute("SELECT u.* FROM app_users u JOIN user_sessions s ON s.user_id=u.id WHERE s.token_hash=? AND s.expires_at>CURRENT_TIMESTAMP", (token_hash,)).fetchone()
-            REQUEST_ACTOR.user_id = str(record["id"]) if record else ""
-            REQUEST_ACTOR.display_name = record["display_name"] if record else ""
-            return record
+            token_hash = self._session_token_hash()
+            if token_hash:
+                with connect_db() as db:
+                    record = db.execute("SELECT u.* FROM app_users u JOIN user_sessions s ON s.user_id=u.id WHERE s.token_hash=? AND s.expires_at>CURRENT_TIMESTAMP", (token_hash,)).fetchone()
         except (AttributeError, KeyError, sqlite3.Error):
             return None
+        REQUEST_ACTOR.user_id = str(record["id"]) if record else ""
+        REQUEST_ACTOR.display_name = record["display_name"] if record else ""
+        self._user_cache, self._user_cache_loaded = record, True
+        return record
 
     def _require_user(self) -> str | None:
         user = self._current_user()
@@ -362,9 +516,10 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             "canManageUsers": admin,
             "canEditScales": can_edit("scales"),
             "canManageNotices": admin,
+            "mustChangePassword": bool(record.get("must_change_password")),
         }
 
-    def do_GET(self):
+    def _handle_get(self):
         path = urlparse(self.path).path
         if path == "/healthz":
             try:
@@ -524,18 +679,16 @@ class SigaseHandler(SimpleHTTPRequestHandler):
         if path.startswith("/api/"):
             self._json(404, {"error": "Rota não encontrada."})
             return
-        super().do_GET()
+        self._serve_static()
 
-    def do_POST(self):
+    def _handle_post(self):
         path = urlparse(self.path).path
         if path == "/api/heartbeat":
             current = self._current_user_record()
             if not current:
                 self._require_user()
                 return
-            cookie = SimpleCookie(); cookie.load(self.headers.get("Cookie", ""))
-            token = cookie.get("sigase_session")
-            token_hash = hashlib.sha256(token.value.encode("utf-8")).hexdigest() if token else ""
+            token_hash = self._session_token_hash()
             with connect_db() as db:
                 db.execute("UPDATE user_sessions SET last_seen=CURRENT_TIMESTAMP WHERE token_hash=? AND user_id=?", (token_hash, current["id"]))
             self._json(200, {"ok": True})
@@ -602,21 +755,64 @@ class SigaseHandler(SimpleHTTPRequestHandler):
         if path == "/api/login":
             body = self._body()
             login, password = body.get("login"), body.get("password")
-            if not isinstance(login, str) or not isinstance(password, str):
+            if not isinstance(login, str) or not isinstance(password, str) or not login.strip() or len(login) > 40 or len(password) > 128:
                 self._json(400, {"error": "Informe o login e a senha."})
+                return
+            ip, login_key = self._client_ip(), login.strip().casefold()
+            wait = LOGIN_THROTTLE.retry_after(ip, login_key)
+            if wait:
+                minutes = max(1, (wait + 59) // 60)
+                self._json(429, {"error": f"Muitas tentativas de acesso. Aguarde {minutes} min e tente novamente."}, {"Retry-After": str(wait)})
                 return
             with connect_db() as db:
                 record = db.execute("SELECT * FROM app_users WHERE LOWER(login)=LOWER(?)", (login.strip(),)).fetchone()
-                if not record or not _verify_password(password, record["password_hash"]):
+                # Hash even for unknown logins so response time does not reveal which logins exist.
+                valid = _verify_password(password, record["password_hash"] if record else _DUMMY_PASSWORD_HASH) and record is not None
+                if not valid:
+                    LOGIN_THROTTLE.failure(ip, login_key)
                     self._json(401, {"error": "Login ou senha inválidos."})
                     return
+                LOGIN_THROTTLE.success(ip, login_key)
+                if not record.get("must_change_password") and _password_problem(password, record["login"]):
+                    db.execute("UPDATE app_users SET must_change_password=TRUE WHERE id=?", (record["id"],))
+                    record = {**record, "must_change_password": True}
+                db.execute("DELETE FROM user_sessions WHERE expires_at<=CURRENT_TIMESTAMP")
                 token = secrets.token_urlsafe(32)
                 token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
                 db.execute("INSERT INTO user_sessions (token_hash,user_id,expires_at) VALUES (?,?,datetime('now','+1 hour'))", (token_hash, record["id"]))
-            if not record:
-                self._json(401, {"error": "Login ou senha inválidos."})
+            self._json(200, self._user_payload(record), {"Set-Cookie": self._session_cookie(token, 3600)})
+            return
+        if path == "/api/me/password":
+            current = self._current_user_record()
+            if not current:
+                self._require_user()
                 return
-            self._json(200, self._user_payload(record), {"Set-Cookie": f"sigase_session={token}; Path=/; Max-Age=3600; HttpOnly; SameSite=Strict"})
+            body = self._body()
+            current_password, new_password = body.get("current_password"), body.get("new_password")
+            if not isinstance(current_password, str) or not isinstance(new_password, str):
+                self._json(400, {"error": "Informe a senha atual e a nova senha."})
+                return
+            ip, login_key = self._client_ip(), current["login"].casefold()
+            if LOGIN_THROTTLE.retry_after(ip, login_key):
+                self._json(429, {"error": "Muitas tentativas. Aguarde alguns minutos e tente novamente."})
+                return
+            if not _verify_password(current_password, current["password_hash"]):
+                LOGIN_THROTTLE.failure(ip, login_key)
+                self._json(400, {"error": "A senha atual está incorreta."})
+                return
+            problem = _password_problem(new_password, current["login"])
+            if problem:
+                self._json(400, {"error": problem})
+                return
+            if new_password == current_password:
+                self._json(400, {"error": "A nova senha deve ser diferente da atual."})
+                return
+            token_hash = self._session_token_hash()
+            with connect_db() as db:
+                db.execute("UPDATE app_users SET password_hash=?, must_change_password=FALSE, updated_at=CURRENT_TIMESTAMP WHERE id=?", (_password_hash(new_password), current["id"]))
+                # End every other session of this user; keep the one that made the change.
+                db.execute("DELETE FROM user_sessions WHERE user_id=? AND token_hash<>?", (current["id"], token_hash))
+            self._json(200, self._user_payload(self._current_user_record(refresh=True)))
             return
         if path == "/api/logout":
             cookie = SimpleCookie()
@@ -629,7 +825,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                         db.execute("DELETE FROM user_sessions WHERE token_hash=?", (token_hash,))
             except (sqlite3.Error, AttributeError):
                 pass
-            self._json(200, {"ok": True}, {"Set-Cookie": "sigase_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict"})
+            self._json(200, {"ok": True}, {"Set-Cookie": self._session_cookie("", 0)})
             return
         if path == "/api/release-note/ack":
             current = self._current_user_record()
@@ -726,7 +922,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 return
             try:
                 with connect_db() as db:
-                    cur = db.execute("INSERT INTO app_users (display_name,login,password_hash,role,functions_json,permissions_json,avatar_icon,updated_at) VALUES (?,?,?,?,?,?,?,CURRENT_TIMESTAMP)", (record["display_name"], record["login"], _password_hash(record["password"]), record["role"], json.dumps(record["functions"], ensure_ascii=False), json.dumps(record["permissions"], ensure_ascii=False), record["avatar_icon"]))
+                    cur = db.execute("INSERT INTO app_users (display_name,login,password_hash,role,functions_json,permissions_json,avatar_icon,must_change_password,updated_at) VALUES (?,?,?,?,?,?,?,TRUE,CURRENT_TIMESTAMP)", (record["display_name"], record["login"], _password_hash(record["password"]), record["role"], json.dumps(record["functions"], ensure_ascii=False), json.dumps(record["permissions"], ensure_ascii=False), record["avatar_icon"]))
                     row = db.execute("SELECT id,display_name,login,role,functions_json,permissions_json,avatar_icon,created_at,updated_at FROM app_users WHERE id=?", (cur.lastrowid,)).fetchone()
             except sqlite3.IntegrityError:
                 self._json(400, {"error": "Já existe um usuário ou login com esses dados."})
@@ -980,7 +1176,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             return
         self._json(405, {"error": "Método não permitido."})
 
-    def do_PUT(self):
+    def _handle_put(self):
         path = urlparse(self.path).path
         if path.startswith("/api/tasks/"):
             if not self._require_area("tasks"):
@@ -1042,7 +1238,10 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                     return
                 try:
                     if record["password"]:
-                        db.execute("UPDATE app_users SET display_name=?,login=?,password_hash=?,role=?,functions_json=?,permissions_json=?,avatar_icon=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (record["display_name"], record["login"], _password_hash(record["password"]), record["role"], json.dumps(record["functions"], ensure_ascii=False), json.dumps(record["permissions"], ensure_ascii=False), record["avatar_icon"], user_id))
+                        own_account = self._current_user_record()["id"] == user_id
+                        db.execute("UPDATE app_users SET display_name=?,login=?,password_hash=?,role=?,functions_json=?,permissions_json=?,avatar_icon=?,must_change_password=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (record["display_name"], record["login"], _password_hash(record["password"]), record["role"], json.dumps(record["functions"], ensure_ascii=False), json.dumps(record["permissions"], ensure_ascii=False), record["avatar_icon"], not own_account, user_id))
+                        if not own_account:
+                            db.execute("DELETE FROM user_sessions WHERE user_id=?", (user_id,))
                     else:
                         db.execute("UPDATE app_users SET display_name=?,login=?,role=?,functions_json=?,permissions_json=?,avatar_icon=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (record["display_name"], record["login"], record["role"], json.dumps(record["functions"], ensure_ascii=False), json.dumps(record["permissions"], ensure_ascii=False), record["avatar_icon"], user_id))
                 except sqlite3.IntegrityError:
@@ -1209,7 +1408,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             return
         self._json(404, {"error": "Rota não encontrada."})
 
-    def do_DELETE(self):
+    def _handle_delete(self):
         path = urlparse(self.path).path
         if path.startswith("/api/tasks/"):
             if not self._require_area("tasks"):
@@ -1379,8 +1578,11 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             return {}, "Informe o nome do usuário (até 80 caracteres)."
         if not isinstance(login, str) or not login.strip() or len(login.strip()) < 4 or len(login.strip()) > 40 or any(char.isspace() for char in login.strip()):
             return {}, "Informe um login de 4 a 40 caracteres, sem espaços."
-        if not isinstance(password, str) or (password and not 4 <= len(password) <= 128):
-            return {}, "A senha deve ter de 4 a 128 caracteres."
+        if not isinstance(password, str):
+            return {}, "Informe uma senha válida."
+        problem = _password_problem(password, login if isinstance(login, str) else "") if password else None
+        if problem:
+            return {}, problem
         if role not in ("viewer", "editor", "admin"):
             return {}, "Selecione um nível de permissão válido."
         if not isinstance(permissions, list) or any(not isinstance(item, str) or item not in EDIT_AREAS for item in permissions):
@@ -1714,7 +1916,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     import os
 
-    is_render = "PORT" in os.environ
+    is_render = IS_HOSTED
     port = int(os.environ.get("PORT", os.environ.get("SIGASE_PORT", "8000")))
     host = "0.0.0.0" if is_render else "127.0.0.1"
 

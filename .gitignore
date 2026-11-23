@@ -18,3 +18,10 @@ venv/
 *.log
 .DS_Store
 Thumbs.db
+
+# Old copies and compressed backups (may contain real .env credentials)
+1.1/
+*.zip
+*.rar
+*.7z
+data/legacy/
