@@ -24,6 +24,7 @@ IS_HOSTED = "PORT" in os.environ
 # Everything else in the project folder (.env, server.py, .git, backups) stays private.
 STATIC_FILES = {"/": "/index.html", "/index.html": "/index.html", "/app.js": "/app.js", "/styles.css": "/styles.css"}
 STATIC_PREFIXES = ("/assets/",)
+REACT_DIST_DIR = BASE_DIR / "web" / "dist"
 LOGIN_MAX_FAILURES = 5
 LOGIN_WINDOW_SECONDS = 15 * 60
 LOGIN_LOCK_SECONDS = 15 * 60
@@ -261,37 +262,81 @@ def connect_db() -> PostgresConnection:
         raise
 
 
+SCHEMA_VERSION_TABLE = "public.sigase_schema_version"
+SCHEMA_LOCK_TIMEOUT = "8s"
+SCHEMA_MAX_ATTEMPTS = 6
+
+
+def _seed_defaults(db) -> None:
+    db.executemany("INSERT INTO task_categories (name) VALUES (?) ON CONFLICT DO NOTHING", [(name,) for name in ("Férias", "Aditamentos", "Pernoites")])
+    if db.execute("SELECT COUNT(*) AS count FROM app_users").fetchone()["count"] == 0:
+        db.execute(
+            "INSERT INTO app_users (display_name,login,password_hash,role,functions_json,must_change_password) VALUES (?,?,?,?,?,TRUE)",
+            ("Administrador", "0000", _password_hash("0000"), "admin", "[]"),
+        )
+
+
+def _stored_schema_hash(db) -> str | None:
+    if not db.execute("SELECT to_regclass(?) AS name", (SCHEMA_VERSION_TABLE,)).fetchone()["name"]:
+        return None
+    row = db.execute(f"SELECT schema_hash FROM {SCHEMA_VERSION_TABLE} WHERE id=1").fetchone()
+    return row["schema_hash"] if row else None
+
+
 def initialize_db() -> None:
+    """Apply supabase/schema.sql only when it changed since the last successful run.
+
+    Re-running the DDL on every start needs exclusive table locks and deadlocks
+    with other SIGASE instances (e.g. Render) that are serving requests on the
+    same database. The applied schema's hash is stored, so normal restarts only
+    run a quick read.
+    """
     schema_path = BASE_DIR / "supabase" / "schema.sql"
     if not schema_path.exists():
         raise sqlite3.DatabaseError("Arquivo supabase/schema.sql não foi encontrado.")
-    schema_statements = [
-        statement for statement in schema_path.read_text(encoding="utf-8").split(";")
-        if statement.strip()
-    ]
-    # Several local/hosted instances can start against the same Supabase DB.
-    # Serialize bootstrap DDL so concurrent CREATE/ALTER/REVOKE statements do
-    # not acquire the same table locks in different orders.
-    for attempt in range(3):
+    schema_text = schema_path.read_text(encoding="utf-8")
+    schema_hash = hashlib.sha256(schema_text.encode("utf-8")).hexdigest()
+    schema_statements = [statement for statement in schema_text.split(";") if statement.strip()]
+
+    with connect_db() as db:
+        if _stored_schema_hash(db) == schema_hash:
+            _seed_defaults(db)
+            print("[SIGASE] Banco já está atualizado.", flush=True)
+            return
+
+    print("[SIGASE] Aplicando atualização do schema no banco...", flush=True)
+    for attempt in range(1, SCHEMA_MAX_ATTEMPTS + 1):
         try:
             with connect_db() as db:
+                # Serialize bootstrap between SIGASE instances, and give up on a
+                # busy table quickly instead of deadlocking with live requests.
                 db.execute("SELECT pg_advisory_xact_lock(73122026001)")
+                if _stored_schema_hash(db) == schema_hash:
+                    _seed_defaults(db)
+                    return
+                db.execute(f"SET LOCAL lock_timeout = '{SCHEMA_LOCK_TIMEOUT}'")
                 for statement in schema_statements:
                     db.execute(statement)
-                db.executemany("INSERT INTO task_categories (name) VALUES (?) ON CONFLICT DO NOTHING", [(name,) for name in ("Férias", "Aditamentos", "Pernoites")])
-                if db.execute("SELECT COUNT(*) AS count FROM app_users").fetchone()["count"] == 0:
-                    db.execute(
-                        "INSERT INTO app_users (display_name,login,password_hash,role,functions_json,must_change_password) VALUES (?,?,?,?,?,TRUE)",
-                        ("Administrador", "0000", _password_hash("0000"), "admin", "[]"),
-                    )
+                db.execute(f"CREATE TABLE IF NOT EXISTS {SCHEMA_VERSION_TABLE} (id SMALLINT PRIMARY KEY CHECK (id = 1), schema_hash TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+                db.execute(f"ALTER TABLE {SCHEMA_VERSION_TABLE} ENABLE ROW LEVEL SECURITY")
+                db.execute(f"REVOKE ALL ON TABLE {SCHEMA_VERSION_TABLE} FROM anon, authenticated")
+                db.execute(
+                    f"INSERT INTO {SCHEMA_VERSION_TABLE} (id, schema_hash, applied_at) VALUES (1, ?, CURRENT_TIMESTAMP) "
+                    "ON CONFLICT (id) DO UPDATE SET schema_hash=EXCLUDED.schema_hash, applied_at=EXCLUDED.applied_at",
+                    (schema_hash,),
+                )
+                _seed_defaults(db)
+            print("[SIGASE] Schema atualizado.", flush=True)
             return
         except sqlite3.DatabaseError as error:
-            if "deadlock detected" not in str(error).lower() or attempt == 2:
+            message = str(error).lower()
+            busy = "deadlock detected" in message or "lock timeout" in message
+            if not busy or attempt == SCHEMA_MAX_ATTEMPTS:
                 raise
-            # PostgreSQL aborts the whole transaction after a deadlock. The
-            # context manager has rolled it back; reconnect and retry cleanly.
-            time.sleep(0.5 * (attempt + 1))
-
+            wait = 2 * attempt
+            print(f"[SIGASE] Banco ocupado por outra conexão (tentativa {attempt}/{SCHEMA_MAX_ATTEMPTS}); tentando de novo em {wait}s...", flush=True)
+            # PostgreSQL aborts the whole transaction; the context manager rolled it back.
+            time.sleep(wait)
 
 
 def apply_unit_seniority(db, record: dict, person_id: int | None = None) -> str | None:
@@ -379,6 +424,13 @@ class SigaseHandler(SimpleHTTPRequestHandler):
         """Map a request path to an allowed static file path, or None if it must not be served."""
         raw = urlparse(self.path).path
         decoded = posixpath.normpath(unquote(raw))
+        # Protótipo React (web/dist, gerado com "npm run build" dentro de web/), servido em /novo/.
+        if decoded == "/novo" or decoded.startswith("/novo/"):
+            relative = decoded[len("/novo"):].lstrip("/") or "index.html"
+            if any(part.startswith(".") for part in relative.split("/")):
+                return None
+            candidate = REACT_DIST_DIR / relative
+            return f"/web/dist/{relative}" if candidate.is_file() else None
         if raw.endswith("/") and raw != "/":
             return None
         if decoded in STATIC_FILES:

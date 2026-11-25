@@ -25,3 +25,7 @@ Thumbs.db
 *.rar
 *.7z
 data/legacy/
+
+# Protótipo React: dependências e build gerado
+web/node_modules/
+web/dist/

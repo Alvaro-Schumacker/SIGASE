@@ -1,0 +1,185 @@
+/* Editor em formato de folha A4: imita o documento impresso (Times New Roman, tabelas com borda). */
+
+.doc-editor {
+  position: fixed;
+  inset: 0;
+  z-index: 190;
+  display: flex;
+  flex-direction: column;
+  background: light-dark(#e6e9e4, #1d1f1d);
+}
+.doc-editor-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 18px;
+  background: var(--mantine-color-body);
+  border-bottom: 1px solid var(--mantine-color-default-border);
+}
+.doc-editor-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.doc-editor-canvas {
+  flex: 1;
+  overflow: auto;
+  padding: 28px 24px 80px;
+}
+.doc-editor-side {
+  flex: 0 0 310px;
+  overflow: auto;
+  padding: 16px;
+  background: var(--mantine-color-body);
+  border-left: 1px solid var(--mantine-color-default-border);
+}
+@media (max-width: 62em) {
+  .doc-editor-main { flex-direction: column-reverse; }
+  .doc-editor-side { flex: 0 0 auto; max-height: 38vh; border-left: 0; border-top: 1px solid var(--mantine-color-default-border); }
+  .doc-editor-canvas { padding: 16px 8px 40px; }
+}
+
+/* ---------- folha ---------- */
+.doc-sheet {
+  width: 210mm;
+  max-width: 100%;
+  min-height: 297mm;
+  margin: 0 auto 24px;
+  padding: 14mm 15mm;
+  background: #fff;
+  color: #111;
+  font: 10pt/1.2 'Times New Roman', Times, serif;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06), 0 10px 30px rgba(24, 40, 28, 0.14);
+  border-radius: 2px;
+  animation: rise-in 260ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.doc-sheet * { box-sizing: border-box; }
+.doc-center { text-align: center; }
+.doc-header { display: flex; flex-direction: column; align-items: center; font-weight: bold; line-height: 1.12; font-size: 10.5pt; }
+.doc-title { text-align: center; font-weight: bold; text-decoration: underline; font-size: 12.5pt; margin: 6mm 0 3mm; line-height: 1.3; }
+.doc-intro { text-align: center; font-weight: bold; text-decoration: underline; text-transform: uppercase; margin: 0 0 4mm; }
+.doc-part { text-align: center; font-weight: bold; text-decoration: underline; font-size: 11.5pt; margin: 5mm 0 2mm; }
+.doc-subtitle { text-align: center; font-weight: bold; text-decoration: underline; font-size: 11pt; margin: 4mm 0 2mm; }
+
+.doc-table { width: 100%; border-collapse: collapse; margin: 1mm 0 3mm; }
+.doc-table th, .doc-table td { border: 1px solid #222; padding: 1.2mm 2mm; vertical-align: middle; position: relative; }
+.doc-table th { font-weight: bold; text-align: center; }
+.doc-table .doc-num { text-align: center; width: 12%; }
+
+/* Linhas e textos de apoio que aparecem só no editor (não saem na impressão). */
+.doc-ghost {
+  font-family: var(--mantine-font-family);
+  font-size: 11px;
+  color: #7b8a7e;
+}
+.doc-ghost-row td {
+  border-left: 1px dashed #c9d3c9 !important;
+  border-right: 1px dashed #c9d3c9 !important;
+  background: #f4f7f3;
+  padding: 2px 6px !important;
+}
+.doc-add {
+  font-family: var(--mantine-font-family);
+  font-size: 11px;
+  font-weight: 600;
+  color: #456c3d;
+  background: none;
+  border: 1px dashed #b9cdb5;
+  border-radius: 999px;
+  padding: 2px 10px;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms;
+}
+.doc-add:hover { background: #eef3ed; border-color: #456c3d; }
+
+/* ---------- campos embutidos no texto ---------- */
+.doc-field {
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+  text-decoration: inherit;
+  text-transform: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  padding: 0 2px;
+  margin: 0;
+  width: 100%;
+  outline: none;
+  box-shadow: inset 0 -1px 0 #d8dfd6;
+  transition: background 120ms, box-shadow 120ms;
+  resize: none;
+  overflow: hidden;
+}
+.doc-field:hover { background: #f1f6f0; }
+.doc-field:focus { background: #eaf3e8; box-shadow: inset 0 -2px 0 #456c3d; }
+.doc-field::placeholder { color: #b3b9b2; font-style: italic; font-weight: normal; text-decoration: none; }
+.doc-field[data-invalid='true'] { background: #fdecec; box-shadow: inset 0 -2px 0 #e03131; }
+.doc-field-inline { display: inline-block; width: auto; min-width: 2ch; }
+.doc-field-bold { font-weight: bold; }
+
+.doc-date {
+  display: inline;
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 0 2px;
+  box-shadow: inset 0 -1px 0 #d8dfd6;
+  transition: background 120ms;
+}
+.doc-date:hover { background: #f1f6f0; }
+.doc-date[data-invalid='true'] { background: #fdecec; box-shadow: inset 0 -2px 0 #e03131; }
+
+/* Ferramentas da linha: aparecem ao passar o mouse. */
+.doc-row { position: relative; }
+.doc-row-tools {
+  position: absolute;
+  right: -2px;
+  top: 50%;
+  transform: translate(100%, -50%);
+  display: flex;
+  gap: 2px;
+  padding-left: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms;
+  z-index: 2;
+}
+.doc-tools-host:hover .doc-row-tools,
+.doc-tools-host:focus-within .doc-row-tools { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .doc-row-tools { opacity: 1; pointer-events: auto; } }
+.doc-link-dot {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-left: 3px;
+  color: #456c3d;
+}
+
+.doc-sign { text-align: center; margin: 12mm auto 0; width: 70%; }
+.doc-sign .doc-field { font-weight: bold; }
+.doc-role { font-size: 10pt; }
+
+[data-mantine-color-scheme='dark'] .doc-sheet { box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); }
+
+/* ---------- requerimentos e FATD ---------- */
+.req-head { display: flex; flex-direction: column; align-items: center; text-align: center; font-weight: bold; line-height: 1.05; }
+.req-head img { width: 23mm; height: 22mm; object-fit: contain; margin-bottom: 4mm; }
+.req-p { text-align: justify; margin: 3mm 0; }
+.req-indent { text-indent: 25mm; }
+.req-list > div { margin: 0.6mm 0 0.6mm 8mm; }
+.req-lines div { height: 8mm; border-bottom: 1px solid #555; }
+.req-box { border: 1px solid #111; width: 72%; margin: 0 auto; padding: 5mm 6mm; }
+.req-ext { width: 72%; margin: 2mm auto 1mm; border-collapse: collapse; font-size: 8.5pt; }
+.req-ext td { border: 1px solid #111; padding: 1.2mm 2mm; text-align: center; }
+.fatd-box { border: 1px solid #222; margin-top: -1px; padding: 1mm 2mm; }
+.fatd-box h3 { text-align: center; font-size: 10pt; margin: 0 0 1mm; }
+.fatd-line { height: 7mm; border-bottom: 1px solid #555; }
+.doc-pagebreak { text-align: center; margin: -12px 0 12px; }
+.person-option {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.person-option:hover { background: var(--mantine-color-sigase-light); }

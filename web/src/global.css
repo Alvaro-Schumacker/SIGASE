@@ -1,0 +1,122 @@
+body {
+  background: light-dark(#f4f6f3, var(--mantine-color-dark-8));
+}
+
+/* ---------- movimento ---------- */
+
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+.page-enter {
+  animation: page-enter 260ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+/* Itens de lista entram em cascata (até 8 itens). */
+.stagger > * { animation: rise-in 280ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.stagger > *:nth-child(2) { animation-delay: 30ms; }
+.stagger > *:nth-child(3) { animation-delay: 60ms; }
+.stagger > *:nth-child(4) { animation-delay: 90ms; }
+.stagger > *:nth-child(5) { animation-delay: 120ms; }
+.stagger > *:nth-child(6) { animation-delay: 150ms; }
+.stagger > *:nth-child(7) { animation-delay: 180ms; }
+.stagger > *:nth-child(n + 8) { animation-delay: 210ms; }
+
+.stat-card,
+.lift-card {
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+}
+.stat-card:hover,
+.lift-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--mantine-shadow-md);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-enter, .stagger > * { animation: none; }
+  .stat-card:hover, .lift-card:hover { transform: none; }
+}
+
+/* ---------- estrutura ---------- */
+
+.glass-header {
+  background: light-dark(rgba(255, 255, 255, 0.82), rgba(36, 36, 36, 0.82));
+  backdrop-filter: saturate(1.4) blur(10px);
+}
+
+.user-card {
+  border-radius: var(--mantine-radius-lg);
+  background: light-dark(var(--mantine-color-sigase-0), var(--mantine-color-dark-6));
+}
+
+.task-row,
+.clickable-row {
+  cursor: pointer;
+}
+
+.login-bg {
+  min-height: 100vh;
+  background:
+    radial-gradient(ellipse at 20% 10%, light-dark(#dfe9dc, #1f2b22) 0, transparent 55%),
+    radial-gradient(ellipse at 85% 90%, light-dark(#efe7d2, #2a2618) 0, transparent 50%),
+    light-dark(#f4f6f3, var(--mantine-color-dark-8));
+}
+
+/* O logo tem texto escuro: no tema escuro ganha um fundo claro para continuar legível. */
+[data-mantine-color-scheme='dark'] .brand-logo {
+  background: #f5f7f4;
+  padding: 3px 8px;
+  border-radius: 8px;
+}
+
+.nav-icon {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+[data-mantine-color-scheme='dark'] .nav-icon {
+  filter: brightness(1.15);
+}
+
+/* ---------- escalas ---------- */
+.scale-grid {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content;
+  min-width: 100%;
+}
+.scale-grid th,
+.scale-grid td {
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  border-right: 1px solid var(--mantine-color-default-border);
+}
+.scale-sticky {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--mantine-color-body);
+  box-shadow: 2px 0 6px -4px rgba(0, 0, 0, 0.25);
+}
+.scale-cell {
+  position: relative;
+  width: 100%;
+  min-width: 52px;
+  height: 34px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  transition: transform 100ms ease, box-shadow 100ms ease;
+}
+.scale-cell:not(:disabled):hover {
+  transform: scale(1.06);
+  box-shadow: 0 0 0 2px var(--mantine-color-sigase-4);
+}
+.scale-cell[data-excluded] {
+  background: repeating-linear-gradient(45deg, light-dark(#eceeea, #3a3a3a) 0 4px, transparent 4px 8px) !important;
+  color: var(--mantine-color-dimmed) !important;
+}
