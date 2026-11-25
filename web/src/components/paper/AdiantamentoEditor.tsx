@@ -1,6 +1,6 @@
 import { Alert, Button, Group, Select, Switch, Text } from '@mantine/core';
 import { DateInput } from '@mantine/dates';
-import { IconBeach, IconCalendar, IconUser } from '@tabler/icons-react';
+import { IconBeach, IconBold, IconCalendar, IconUser } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
 import { type DocumentRecord, useSaveDocument } from '../../data/documents';
@@ -12,6 +12,7 @@ import { reqExpandedRank, reqRank, reqRichName } from '../../print/legacy';
 import { DocEditorShell, SideCard } from './DocEditorShell';
 import { InlineInput, InlinePerson, InlineSelect } from './Inline';
 import { useDirty } from './useDirty';
+import { BoldWordsPicker } from './bold';
 
 interface Props {
   opened: boolean;
@@ -99,7 +100,7 @@ export function AdiantamentoEditor({ opened, onClose, existing, saved }: Props) 
     setSubmitted(true);
     if (Object.values(errors).some(Boolean)) return notifyError(new Error('Preencha os campos destacados em vermelho.'), 'Campos obrigatórios');
     const person = roster.find((r) => String(r.id) === personId);
-    const snapshot = person ? { rank: person.rank, war_name: person.war_name, full_name: person.full_name, prec_cp: person.prec_cp || '', military_number: person.military_number || '' } : profile;
+    const snapshot = person ? { rank: person.rank, war_name: profile.war_name || person.war_name, full_name: person.full_name, prec_cp: person.prec_cp || '', military_number: person.military_number || '' } : profile;
     const content = { personId: Number(personId), profile: snapshot, ebNumber: f.ebNumber.trim(), installment: f.installment, vacationYear: f.vacationYear, vacationMonth: Number(f.vacationMonth), vacationMonthYear: f.vacationMonthYear, commanderName: f.commanderName.trim(), commanderResponding: f.commanderResponding };
     save.mutate(
       { id: existing?.id, kind: 'adiantamento13', bulletin_number: f.ebNumber.trim(), document_date: f.issueDate, data: content },
@@ -114,7 +115,8 @@ export function AdiantamentoEditor({ opened, onClose, existing, saved }: Props) 
     );
   };
 
-  const person = <InlinePerson html={name} options={options} onPick={pickPerson} invalid={bad('person')} />;
+  const personBold = { full: profile.full_name || '', war: profile.war_name || '', onChange: (w: string) => setProfile((p) => ({ ...p, war_name: w })) };
+  const person = <InlinePerson html={name} options={options} onPick={pickPerson} invalid={bad('person')} bold={profile.full_name ? personBold : undefined} />;
   const sidebar = (
     <>
       <SideCard title="Militar" icon={<IconUser size={16} />}>
@@ -123,6 +125,14 @@ export function AdiantamentoEditor({ opened, onClose, existing, saved }: Props) 
           Graduação, nome e PREC-CP vêm da ficha do efetivo.
         </Text>
       </SideCard>
+      {profile.full_name && (
+        <SideCard title="Negrito do nome de guerra" icon={<IconBold size={16} />}>
+          <BoldWordsPicker label="Militar" {...personBold} />
+          <Text size="xs" c="dimmed">
+            Ou selecione parte do nome na folha e aperte Ctrl+B.
+          </Text>
+        </SideCard>
+      )}
       <SideCard title="Férias do militar" icon={<IconBeach size={16} />}>
         {upcoming ? (
           <Alert variant="light" color="blue" p="xs">

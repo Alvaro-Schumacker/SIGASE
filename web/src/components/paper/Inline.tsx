@@ -1,7 +1,8 @@
 import { ActionIcon, Autocomplete, Popover, ScrollArea, Select, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
 import { DatePicker } from '@mantine/dates';
 import dayjs from 'dayjs';
-import { type CSSProperties, type ReactNode, useLayoutEffect, useRef, useState } from 'react';
+import { type CSSProperties, type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { toggleRange } from './bold';
 import { longDate } from '../../print/legacy';
 import './paper.css';
 
@@ -140,8 +141,52 @@ export function InlineSelect({ value, onChange, data, invalid, placeholder = 'es
 }
 
 /** Nome de militar clicável: abre a busca no efetivo. O conteúdo exibido (com negrito do nome de guerra) vem pronto em HTML. */
-export function InlinePerson({ html, onPick, options, invalid, placeholder = 'clique para escolher o militar' }: { html: string; onPick: (id: string) => void; options: { value: string; label: string }[]; invalid?: boolean; placeholder?: string }) {
+export function InlinePerson({
+  html,
+  onPick,
+  options,
+  invalid,
+  placeholder = 'clique para escolher o militar',
+  bold,
+}: {
+  html: string;
+  onPick: (id: string) => void;
+  options: { value: string; label: string }[];
+  invalid?: boolean;
+  placeholder?: string;
+  /** Permite marcar o negrito selecionando parte do nome e apertando Ctrl+B. */
+  bold?: { full: string; war: string; onChange: (war: string) => void };
+}) {
   const [open, setOpen] = useState(false);
+  const id = useId();
+  const clickTimer = useRef<number>(undefined);
+
+  // Ctrl+B com parte do nome selecionada: alterna o negrito dessas palavras.
+  useEffect(() => {
+    if (!bold) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'b') return;
+      const sel = window.getSelection();
+      if (!sel || !sel.rangeCount || !sel.toString().trim()) return;
+      const node = sel.anchorNode;
+      const el = node instanceof Element ? node : node?.parentElement;
+      const host = el?.closest<HTMLElement>(`[data-bold-id="${CSS.escape(id)}"]`);
+      if (!host) return;
+      e.preventDefault();
+      // Posição da seleção dentro do nome (para distinguir "só a inicial" de "palavra inteira").
+      const range = sel.getRangeAt(0);
+      const before = document.createRange();
+      before.selectNodeContents(host);
+      before.setEnd(range.startContainer, range.startOffset);
+      const from = before.toString().length;
+      const to = from + range.toString().length;
+      bold.onChange(toggleRange(bold.full, bold.war, from, to));
+      sel.removeAllRanges();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [bold, id]);
+
   return (
     <Popover opened={open} onChange={setOpen} position="bottom-start" withArrow shadow="md" zIndex={400} width={380} trapFocus>
       <Popover.Target>
@@ -149,10 +194,18 @@ export function InlinePerson({ html, onPick, options, invalid, placeholder = 'cl
           role="button"
           tabIndex={0}
           className="doc-date"
+          data-bold-id={bold ? id : undefined}
           data-invalid={invalid || undefined}
           aria-invalid={invalid || undefined}
-          title="Clique para trocar o militar"
-          onClick={() => setOpen((o) => !o)}
+          title={bold ? 'Clique para trocar o militar · selecione parte do nome e aperte Ctrl+B para o negrito' : 'Clique para trocar o militar'}
+          // Duplo clique ou arrastar seleciona o texto (para o Ctrl+B); só um clique simples abre a busca.
+          onClick={(e) => {
+            window.clearTimeout(clickTimer.current);
+            if (e.detail > 1) return setOpen(false);
+            clickTimer.current = window.setTimeout(() => {
+              if (!window.getSelection()?.toString().trim()) setOpen((o) => !o);
+            }, bold ? 240 : 0);
+          }}
           onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setOpen(true)}
           {...(html ? { dangerouslySetInnerHTML: { __html: html } } : {})}
           style={html ? undefined : { color: '#b3b9b2', fontStyle: 'italic', fontWeight: 'normal' }}

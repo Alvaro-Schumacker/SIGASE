@@ -1,5 +1,5 @@
 import { Alert, Button, Group, Select, SimpleGrid, Switch, Text } from '@mantine/core';
-import { IconCalculator, IconCopy, IconSignature, IconUser } from '@tabler/icons-react';
+import { IconBold, IconCalculator, IconCopy, IconSignature, IconUser } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { type DocumentRecord, nextNumber, useSaveDocument } from '../../data/documents';
@@ -9,6 +9,7 @@ import { longDate, reqElapsed, reqExpandedRank, reqExtensionRows, reqRank, reqRi
 import { DocEditorShell, SideCard } from './DocEditorShell';
 import { InlineDate, InlineInput, InlinePerson, InlineSelect } from './Inline';
 import { useDirty } from './useDirty';
+import { BoldWordsPicker } from './bold';
 
 interface Props {
   opened: boolean;
@@ -55,11 +56,12 @@ export function ProrrogacaoEditor({ opened, onClose, existing, saved }: Props) {
       pracaDate: d.pracaDate || (d.pracaYear ? `${d.pracaYear}-03-01` : ''),
       behavior: d.behavior || 'Bom',
       taf: d.taf || 'Não Realizado',
-      punishments: d.punishments || '',
+      // Novos requerimentos já vêm com os textos mais comuns (editáveis).
+      punishments: existing ? d.punishments || '' : 'Não há',
       publicYears: String(d.publicYears ?? 0),
       publicMonths: String(d.publicMonths ?? 0),
       publicDays: String(d.publicDays ?? 0),
-      unitSituation: d.unitSituation || '',
+      unitSituation: existing ? d.unitSituation || '' : 'Pronto para serviço',
       signerResponding: existing ? !!d.signerResponding : !!last.signerResponding,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -114,7 +116,7 @@ export function ProrrogacaoEditor({ opened, onClose, existing, saved }: Props) {
     if (pub.some((x) => !Number.isInteger(x) || x < 0)) return notifyError(new Error('O tempo de serviço público deve ter números inteiros não negativos.'), 'Valor inválido');
     // Como na versão clássica, grava o retrato atual da ficha do efetivo (ou o já salvo, se a ficha não existir mais).
     const person = roster.find((r) => String(r.id) === personId);
-    const snapshot = person ? profileOf(person as unknown as Profile) : profile;
+    const snapshot = person ? { ...profileOf(person as unknown as Profile), war_name: profile.war_name || person.war_name } : profile;
     const content = {
       personId: Number(personId), profile: snapshot, issueDate: f.issueDate, city: f.city.trim() || 'Bagé', ebNumber: f.ebNumber.trim(), infoNumber: f.infoNumber.trim(), branch: f.branch,
       pracaDate: f.pracaDate, pracaYear, behavior: f.behavior, taf: f.taf, punishments: f.punishments.trim(), publicYears: pub[0], publicMonths: pub[1], publicDays: pub[2],
@@ -143,7 +145,9 @@ export function ProrrogacaoEditor({ opened, onClose, existing, saved }: Props) {
       <span>GRUPO LEITE DE CASTRO</span>
     </div>
   );
-  const person = <InlinePerson html={name} options={options} onPick={pickPerson} invalid={bad('person')} />;
+  const personBold = { full: profile.full_name || '', war: profile.war_name || '', onChange: (w: string) => setProfile((p) => ({ ...p, war_name: w })) };
+  const signerBold = { full: signer.full_name || '', war: signer.war_name || '', onChange: (w: string) => setSigner((p) => ({ ...p, war_name: w })) };
+  const person = <InlinePerson html={name} options={options} onPick={pickPerson} invalid={bad('person')} bold={profile.full_name ? personBold : undefined} />;
   const cityDate = (
     <>
       <InlineInput value={f.city} onChange={(x) => set({ city: x })} inlineWidth={6} />, <InlineDate value={f.issueDate || null} onChange={(x) => set({ issueDate: x })} weekday={false} invalid={bad('issueDate')} />.
@@ -162,6 +166,13 @@ export function ProrrogacaoEditor({ opened, onClose, existing, saved }: Props) {
       <SideCard title="Assinante (Cmt da 3ª Bia)" icon={<IconSignature size={16} />}>
         <Select size="xs" searchable placeholder="Buscar no efetivo" data={options} value={signerId || null} onChange={pickSigner} comboboxProps={{ zIndex: 400 }} />
         <Switch size="sm" label="Respondendo pelo comandante" checked={f.signerResponding} onChange={(e) => set({ signerResponding: e.currentTarget.checked })} />
+      </SideCard>
+      <SideCard title="Negrito do nome de guerra" icon={<IconBold size={16} />}>
+        <BoldWordsPicker label="Militar" {...personBold} />
+        <BoldWordsPicker label="Assinante" {...signerBold} />
+        <Text size="xs" c="dimmed">
+          Marque as palavras em negrito, ou selecione parte do nome na folha e aperte Ctrl+B. Vale só para este documento.
+        </Text>
       </SideCard>
       <SideCard title="Cálculos automáticos" icon={<IconCalculator size={16} />}>
         <SimpleGrid cols={3} spacing={4}>
@@ -319,7 +330,7 @@ export function ProrrogacaoEditor({ opened, onClose, existing, saved }: Props) {
         </div>
         <p className="req-p">4. O presente requerimento permaneceu ____________ dia (s) nesta Bateria, para fins de informações e encaminhamento.</p>
         <div className="doc-center" style={{ margin: '12mm 0 7mm' }}>
-          <InlinePerson html={signer.full_name ? `${reqRichName(signer.full_name, signer.war_name)} - ${reqRank(signer)}` : ''} options={options} onPick={pickSigner} invalid={bad('signer')} placeholder="clique para escolher o assinante" />
+          <InlinePerson html={signer.full_name ? `${reqRichName(signer.full_name, signer.war_name)} - ${reqRank(signer)}` : ''} options={options} onPick={pickSigner} invalid={bad('signer')} placeholder="clique para escolher o assinante" bold={signer.full_name ? signerBold : undefined} />
           <div>{f.signerResponding ? 'Respondendo pelo ' : ''}Comandante da 3ª Bateria de Obuses</div>
           <Group justify="center" mt={4}>
             <Switch size="xs" label={<span className="doc-ghost">respondendo</span>} checked={f.signerResponding} onChange={(e) => set({ signerResponding: e.currentTarget.checked })} />

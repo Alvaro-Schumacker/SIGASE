@@ -1,5 +1,5 @@
 import { Alert, Button, Select, Text } from '@mantine/core';
-import { IconCopy, IconUser, IconUserSearch } from '@tabler/icons-react';
+import { IconBold, IconCopy, IconUser, IconUserSearch } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
 import { type DocumentRecord, useSaveDocument } from '../../data/documents';
@@ -9,6 +9,7 @@ import { reqRank, richPersonName, splitWarName } from '../../print/legacy';
 import { DocEditorShell, SideCard } from './DocEditorShell';
 import { InlineDate, InlineInput, InlinePerson, InlineSelect, InlineTextarea } from './Inline';
 import { useDirty } from './useDirty';
+import { BoldWordsPicker } from './bold';
 
 interface Props {
   opened: boolean;
@@ -25,13 +26,13 @@ const shortDate = (iso: string) => new Intl.DateTimeFormat('pt-BR', { day: '2-di
 
 const blank = {
   process_number: '', date: '', militaryPersonId: '', militaryRank: '', militaryId: '', militaryName: '', militaryWarName: '', militarySubunit: '3ª Bia O',
-  participantRank: '', participantId: '', participantName: '', participantSubunit: '3ª Bia O', report: '', authorityRank: '', authorityName: '', authoritySubunit: '', authorityRole: '',
+  participantRank: '', participantId: '', participantName: '', participantWarName: '', participantSubunit: '3ª Bia O', report: '', authorityRank: '', authorityName: '', authoritySubunit: '', authorityRole: '',
 };
 type FatdData = typeof blank;
 const lastParts = (prev: DocumentRecord[]) => {
   const last = [...prev].sort((a, b) => num(b) - num(a))[0]?.data || {};
   return {
-    participantRank: last.participantRank || '', participantId: last.participantId || '', participantName: last.participantName || '', participantSubunit: last.participantSubunit || '3ª Bia O',
+    participantRank: last.participantRank || '', participantId: last.participantId || '', participantName: last.participantName || '', participantWarName: last.participantWarName || '', participantSubunit: last.participantSubunit || '3ª Bia O',
     authorityRank: last.authorityRank || '', authorityName: last.authorityName || '', authoritySubunit: last.authoritySubunit || '', authorityRole: last.authorityRole || '',
   };
 };
@@ -67,7 +68,7 @@ export function FatdEditor({ opened, onClose, existing, saved }: Props) {
   };
   const pickParticipant = (id: string | null) => {
     const p: UnitPerson | undefined = roster.find((r) => r.id === Number(id));
-    if (p) set({ participantRank: reqRank(p), participantId: p.military_id || p.military_number || p.cpf || '', participantName: p.full_name, participantSubunit: v.participantSubunit || '3ª Bia O' });
+    if (p) set({ participantRank: reqRank(p), participantId: p.military_id || p.military_number || p.cpf || '', participantName: p.full_name, participantWarName: p.war_name || '', participantSubunit: v.participantSubunit || '3ª Bia O' });
   };
 
   const bad = (k: keyof FatdData) => submitted && REQUIRED.includes(k as (typeof REQUIRED)[number]) && !String(v[k] || '').trim();
@@ -91,7 +92,7 @@ export function FatdEditor({ opened, onClose, existing, saved }: Props) {
   };
 
   const military = v.militaryName ? `${richPersonName(v.militaryName, v.militaryWarName)}${v.militaryRank ? ` - ${v.militaryRank}` : ''}` : '';
-  const participant = v.participantName ? `${richPersonName(v.participantName)}${v.participantRank ? ` — ${v.participantRank}` : ''}` : '';
+  const participant = v.participantName ? `${richPersonName(v.participantName, v.participantWarName)}${v.participantRank ? ` — ${v.participantRank}` : ''}` : '';
   const year = (v.date || '').slice(0, 4);
   const lines = (n: number) => Array.from({ length: n }, (_, i) => <div key={i} className="fatd-line" />);
 
@@ -107,6 +108,13 @@ export function FatdEditor({ opened, onClose, existing, saved }: Props) {
         <Select size="xs" searchable placeholder="Buscar no efetivo" data={options} value={null} onChange={pickParticipant} comboboxProps={{ zIndex: 400 }} />
         <Text size="xs" c="dimmed">
           Opcional: o participante também pode ser digitado na folha.
+        </Text>
+      </SideCard>
+      <SideCard title="Negrito do nome de guerra" icon={<IconBold size={16} />}>
+        <BoldWordsPicker label="Militar arrolado" full={v.militaryName} war={v.militaryWarName} onChange={(w) => set({ militaryWarName: w })} />
+        <BoldWordsPicker label="Participante" full={v.participantName} war={v.participantWarName} onChange={(w) => set({ participantWarName: w })} />
+        <Text size="xs" c="dimmed">
+          Marque as palavras em negrito, ou selecione parte do nome do militar na folha e aperte Ctrl+B.
         </Text>
       </SideCard>
       <SideCard title="Repetir do FATD anterior" icon={<IconCopy size={16} />}>
@@ -157,7 +165,7 @@ export function FatdEditor({ opened, onClose, existing, saved }: Props) {
             <b>Grau Hierárquico:</b> {field('militaryRank', 'graduação', 8)} <b style={{ marginLeft: '12mm' }}>IDT/CPF:</b> {field('militaryId', 'identidade', 14)}
           </div>
           <div>
-            <b>Nome Completo:</b> <InlinePerson html={v.militaryName ? richPersonName(v.militaryName, v.militaryWarName) : ''} options={options} onPick={pickMilitary} invalid={bad('militaryPersonId') || bad('militaryName')} />
+            <b>Nome Completo:</b> <InlinePerson html={v.militaryName ? richPersonName(v.militaryName, v.militaryWarName) : ''} options={options} onPick={pickMilitary} invalid={bad('militaryPersonId') || bad('militaryName')} bold={v.militaryName ? { full: v.militaryName, war: v.militaryWarName, onChange: (w) => set({ militaryWarName: w }) } : undefined} />
           </div>
           <div>
             <b>Subunidade/OM:</b> <InlineSelect value={v.militarySubunit} onChange={(x) => set({ militarySubunit: x })} data={SUBUNITS} invalid={bad('militarySubunit')} />

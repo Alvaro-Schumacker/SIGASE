@@ -6,13 +6,13 @@ import { api } from '../api';
 
 /** Notas da versão: aparecem uma vez por usuário (ciência registrada no banco, como na versão atual). */
 export const RELEASE = {
-  version: '2.0.0',
-  title: 'Nova interface do SIGASE',
+  version: '2.1.0',
+  title: 'Negrito do nome de guerra',
   entries: [
-    'Visual totalmente renovado, com tema claro e escuro.',
-    'Página Inicial com agenda, avisos e próximas providências.',
-    'Navegação mais rápida entre as áreas, também no celular.',
-    'Mesmos dados e documentos da versão anterior.',
+    'Selecione parte do nome na folha e aperte Ctrl+B para marcar o negrito.',
+    'Iniciais abreviadas no nome de guerra (ex.: “M. Fonseca”) deixam só a letra em negrito.',
+    'O nome inteiro não fica mais em negrito quando o nome de guerra não é encontrado.',
+    'Prorrogação: punições e situação na OM já vêm preenchidas em novos requerimentos.',
   ],
 };
 
