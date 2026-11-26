@@ -2,7 +2,8 @@ import { Alert, Button, Group, Select, SimpleGrid, Switch, Text } from '@mantine
 import { IconBold, IconCalculator, IconCopy, IconSignature, IconUser } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
-import { type DocumentRecord, nextNumber, useSaveDocument } from '../../data/documents';
+import { type DocumentRecord, nextNumber } from '../../data/documents';
+import { useSaveDocument } from '../docs/editSession';
 import { useUnitPersonnel } from '../../data/unit';
 import { notifyError, notifyOk } from '../../lib/confirm';
 import { longDate, reqElapsed, reqExpandedRank, reqExtensionRows, reqRank, reqRichName } from '../../print/legacy';

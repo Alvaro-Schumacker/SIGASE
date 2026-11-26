@@ -2,7 +2,8 @@ import { Alert, Badge, Button, Group, Select, SimpleGrid, Switch, Text } from '@
 import { IconCopy, IconRefresh, IconX } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { type DocumentRecord, useDocuments, useSaveDocument } from '../../data/documents';
+import { type DocumentRecord, useDocuments } from '../../data/documents';
+import { useSaveDocument } from '../docs/editSession';
 import { notifyError, notifyOk } from '../../lib/confirm';
 import { fmtDate } from '../../lib/format';
 import { aditRanks, normalizeAditDays, pernoiteGroups, pernoiteRankDefaults, pernoiteServiceChoices, splitPernoitePersonnel } from '../../print/legacy';

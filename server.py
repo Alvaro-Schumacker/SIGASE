@@ -100,6 +100,85 @@ REQUIREMENT_KINDS = {"prorrogacao", "adiantamento13"}
 VACATION_SPLITS = {1: ("30",), 2: ("15+15", "20+10"), 3: ("10+10+10",)}
 
 
+class DocumentPresence:
+    """Quem está com cada documento aberto no editor e quem salvou por último.
+
+    Fica só na memória do servidor (não usa o banco): o editor avisa a cada ~15 s e a entrada
+    expira sozinha se a aba for fechada sem avisar. Se o servidor reiniciar, a lista se refaz no
+    próximo aviso de cada editor. O prazo é folgado porque o navegador atrasa os timers de abas
+    em segundo plano (até 1 aviso por minuto). A proteção contra sobrescrever trabalho é a checagem de
+    updated_at no salvamento; esta classe serve só para avisar as pessoas.
+    """
+
+    TTL_SECONDS = 120
+    MAX_SAVES = 2000
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._editing: dict[int, dict[int, dict]] = {}
+        self._saves: dict[int, dict] = {}
+
+    def _prune(self, now: float) -> None:
+        for doc_id in list(self._editing):
+            users = {uid: entry for uid, entry in self._editing[doc_id].items() if now - entry["seen"] <= self.TTL_SECONDS}
+            if users:
+                self._editing[doc_id] = users
+            else:
+                del self._editing[doc_id]
+
+    @staticmethod
+    def _public(entry: dict) -> dict:
+        return {"user_id": entry["user_id"], "name": entry["name"], "avatar_icon": entry["avatar_icon"], "since": entry["since"]}
+
+    def touch(self, doc_id: int, user) -> list[dict]:
+        """Registra que o usuário está editando e devolve os OUTROS que estão no mesmo documento."""
+        now = time.monotonic()
+        with self._lock:
+            self._prune(now)
+            users = self._editing.setdefault(doc_id, {})
+            entry = users.get(user["id"])
+            if entry is None:
+                entry = {"user_id": user["id"], "name": user["display_name"], "avatar_icon": user.get("avatar_icon") or "", "since": datetime.now(timezone.utc).isoformat()}
+                users[user["id"]] = entry
+            entry["seen"] = now
+            return [self._public(e) for uid, e in users.items() if uid != user["id"]]
+
+    def leave(self, doc_id: int, user_id: int) -> None:
+        with self._lock:
+            users = self._editing.get(doc_id)
+            if users:
+                users.pop(user_id, None)
+                if not users:
+                    self._editing.pop(doc_id, None)
+
+    def snapshot(self) -> dict[str, list[dict]]:
+        with self._lock:
+            self._prune(time.monotonic())
+            return {str(doc_id): [self._public(e) for e in users.values()] for doc_id, users in self._editing.items()}
+
+    def record_save(self, doc_id: int, updated_at, user) -> None:
+        with self._lock:
+            if len(self._saves) >= self.MAX_SAVES:
+                self._saves.clear()
+            self._saves[doc_id] = {"updated_at": str(updated_at), "user_id": user["id"] if user else None, "name": user["display_name"] if user else ""}
+
+    def last_save(self, doc_id: int, updated_at) -> dict:
+        """Quem gravou a versão `updated_at` (nome vazio se o servidor não sabe, ex.: depois de reiniciar)."""
+        with self._lock:
+            save = self._saves.get(doc_id)
+        if save and save["updated_at"] == str(updated_at):
+            return {"updated_at": str(updated_at), "user_id": save["user_id"], "name": save["name"]}
+        return {"updated_at": str(updated_at), "user_id": None, "name": ""}
+
+    def forget(self, doc_id: int) -> None:
+        with self._lock:
+            self._editing.pop(doc_id, None)
+            self._saves.pop(doc_id, None)
+
+
+DOCUMENT_PRESENCE = DocumentPresence()
+
+
 def _scale_assignment_service(value):
     if not isinstance(value, str):
         return None
@@ -506,6 +585,11 @@ class SigaseHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    @staticmethod
+    def _presence_document_id(path: str) -> int | None:
+        match = re.fullmatch(r"/api/documents/(\d{1,12})/presence", path)
+        return int(match.group(1)) if match else None
+
     def _body(self) -> dict:
         size = min(int(self.headers.get("Content-Length", "0")), 32_000)
         try:
@@ -718,6 +802,11 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 rows = db.execute("SELECT * FROM unit_personnel ORDER BY full_name COLLATE NOCASE").fetchall()
             self._json(200, {"personnel": [self._unit_record(row) for row in rows]})
             return
+        if path == "/api/documents/presence":
+            if not self._require_user():
+                return
+            self._json(200, {"editing": DOCUMENT_PRESENCE.snapshot()})
+            return
         if path == "/api/documents":
             if not self._require_user():
                 return
@@ -768,6 +857,23 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             with connect_db() as db:
                 db.execute("UPDATE user_sessions SET last_seen=CURRENT_TIMESTAMP WHERE token_hash=? AND user_id=?", (token_hash, current["id"]))
             self._json(200, {"ok": True})
+            return
+        presence_id = self._presence_document_id(path)
+        if presence_id is not None:
+            # Aviso periódico do editor aberto: "estou editando". Devolve quem mais está no documento
+            # e a versão salva no banco, para o editor avisar se alguém salvou enquanto isso.
+            current = self._current_user_record()
+            if not current:
+                self._require_user()
+                return
+            with connect_db() as db:
+                row = db.execute("SELECT updated_at FROM documents WHERE id=?", (presence_id,)).fetchone()
+            if not row:
+                DOCUMENT_PRESENCE.forget(presence_id)
+                self._json(404, {"error": "Documento não encontrado.", "code": "document_missing"})
+                return
+            others = DOCUMENT_PRESENCE.touch(presence_id, current)
+            self._json(200, {"editors": others, "saved": DOCUMENT_PRESENCE.last_save(presence_id, row["updated_at"])})
             return
         if path == "/api/tasks":
             if not self._require_area("tasks"):
@@ -1070,6 +1176,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 else:
                     self._json(503, {"error": "Não foi possível salvar o documento no banco de dados. Verifique a conexão com o Supabase e o log do servidor."})
                 return
+            DOCUMENT_PRESENCE.record_save(row["id"], row["updated_at"], self._current_user_record())
             self._json(201, {"document": self._document_record(row)})
             return
         if path == "/api/force-maps":
@@ -1383,20 +1490,39 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             except ValueError:
                 self._json(400, {"error": "Identificador inválido."})
                 return
-            record, error = self._validate_document(self._body())
+            body = self._body()
+            record, error = self._validate_document(body)
             if error:
                 self._json(400, {"error": error})
+                return
+            # Versão (updated_at) que o editor carregou. Sem ela (versão clássica), salva como antes.
+            base_version = body.get("base_updated_at")
+            if base_version is not None and (not isinstance(base_version, str) or len(base_version) > 64):
+                self._json(400, {"error": "Versão do documento inválida."})
                 return
             if not self._require_area("requirements" if record["kind"] in REQUIREMENT_KINDS else "documents"):
                 return
             try:
                 with connect_db() as db:
-                    previous = db.execute("SELECT kind FROM documents WHERE id=?", (document_id,)).fetchone()
+                    # FOR UPDATE: dois salvamentos ao mesmo tempo esperam um pelo outro, e o segundo
+                    # enxerga o updated_at novo, caindo no conflito em vez de sobrescrever.
+                    previous = db.execute("SELECT kind, updated_at FROM documents WHERE id=? FOR UPDATE", (document_id,)).fetchone()
                     if not previous:
-                        self._json(404, {"error": "Documento não encontrado."})
+                        self._json(404, {"error": "Documento não encontrado.", "code": "document_missing"})
                         return
                     previous_area = "requirements" if previous["kind"] in REQUIREMENT_KINDS else "documents"
                     if not self._require_area(previous_area):
+                        return
+                    if base_version is not None and base_version != str(previous["updated_at"]):
+                        latest = db.execute("SELECT * FROM documents WHERE id=?", (document_id,)).fetchone()
+                        saved = DOCUMENT_PRESENCE.last_save(document_id, previous["updated_at"])
+                        who = saved["name"] or "Outra pessoa"
+                        self._json(409, {
+                            "error": f"{who} salvou este documento enquanto você editava. Nada foi sobrescrito.",
+                            "code": "document_conflict",
+                            "document": self._document_record(latest),
+                            "saved": saved,
+                        })
                         return
                     cur = db.execute("UPDATE documents SET kind=?, bulletin_number=?, document_date=?, data_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (record["kind"], record["bulletin_number"], record["document_date"], json.dumps(record["data"], ensure_ascii=False), document_id))
                     row = db.execute("SELECT * FROM documents WHERE id=?", (document_id,)).fetchone()
@@ -1410,6 +1536,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             if not cur.rowcount or row is None:
                 self._json(404, {"error": "Documento não encontrado."})
                 return
+            DOCUMENT_PRESENCE.record_save(document_id, row["updated_at"], self._current_user_record())
             self._json(200, {"document": self._document_record(row)})
             return
         if path.startswith("/api/force-maps/"):
@@ -1524,6 +1651,15 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 return
             self._json(200, {"ok": True})
             return
+        presence_id = self._presence_document_id(path)
+        if presence_id is not None:
+            current = self._current_user_record()
+            if not current:
+                self._require_user()
+                return
+            DOCUMENT_PRESENCE.leave(presence_id, current["id"])
+            self._json(200, {"ok": True})
+            return
         if path.startswith("/api/documents/"):
             try:
                 item_id = int(path.rsplit("/", 1)[1])
@@ -1542,6 +1678,7 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             if not cur.rowcount:
                 self._json(404, {"error": "Documento não encontrado."})
                 return
+            DOCUMENT_PRESENCE.forget(item_id)
             self._json(200, {"ok": True})
             return
         if path.startswith("/api/service-scales/"):

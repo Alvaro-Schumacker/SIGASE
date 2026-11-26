@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../api';
 import type { Paper } from '../lib/print';
 import { adiantamentoStyles, printStyles, printTitleOverrides, prorrogacaoStyles, renderDocumentMarkup } from '../print/legacy';
@@ -10,6 +10,8 @@ export interface DocumentRecord {
   kind: DocKind;
   bulletin_number: string;
   document_date: string;
+  /** Versão salva no banco; o editor a devolve ao salvar para o servidor detectar conflitos. */
+  updated_at?: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any;
 }
@@ -78,12 +80,4 @@ export interface DocumentInput {
   bulletin_number: string;
   document_date: string;
   data: unknown;
-}
-
-export function useSaveDocument() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, ...body }: DocumentInput) => api(id ? `/api/documents/${id}` : '/api/documents', { method: id ? 'PUT' : 'POST', body }),
-    onSuccess: (_r, v) => qc.invalidateQueries({ queryKey: ['documents', v.kind] }),
-  });
 }

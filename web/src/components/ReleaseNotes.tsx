@@ -6,14 +6,13 @@ import { api } from '../api';
 
 /** Notas da versão: aparecem uma vez por usuário (ciência registrada no banco, como na versão atual). */
 export const RELEASE = {
-  version: '2.2.0',
-  title: 'Plano de férias renovado',
+  version: '2.3.0',
+  title: 'Edição simultânea sem perder trabalho',
   entries: [
-    'Calendário em linha do tempo: uma linha por militar, com parcela, dias e referência.',
-    'Desconto em férias, que sai automaticamente da última parcela.',
-    'Divisões 30, 15+15, 20+10 e 10+10+10, e qualquer ano de referência.',
-    'Deslocamento liberado uma vez por referência, com aviso quando já foi usado.',
-    'Nova aba “Saldo por militar”. A versão clássica agora fica em /classico/.',
+    'Se alguém salvar o documento enquanto você edita, o SIGASE avisa e nada é sobrescrito.',
+    'Você escolhe: ver a versão do colega, carregá-la ou salvar a sua por cima.',
+    'A lista mostra quem está editando cada documento agora.',
+    'Dentro do editor aparece quem mais está com o documento aberto e quando sai uma versão nova.',
   ],
 };
 

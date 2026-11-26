@@ -1,5 +1,5 @@
 import { Alert, Button, Group, Modal, Stack, Text } from '@mantine/core';
-import { IconEdit, IconPrinter, IconTrash } from '@tabler/icons-react';
+import { IconEdit, IconPencil, IconPrinter, IconTrash } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { type DocumentRecord, documentPaper } from '../../data/documents';
 import { printPaper } from '../../lib/print';
@@ -11,11 +11,13 @@ interface Props {
   canEdit: boolean;
   onEdit: (doc: DocumentRecord) => void;
   onDelete: (doc: DocumentRecord) => void;
+  /** Nomes de quem está com o documento aberto no editor agora. */
+  editingBy?: string;
 }
 
 const EYEBROW = { fatd: 'FATD · Processo', prorrogacao: 'Requerimento · Informação nº', adiantamento13: 'Requerimento · Adiantamento de 13º', aditamento: 'Documento · Boletim Nr', pernoite: 'Documento · Boletim Nr' } as const;
 
-export function DocumentViewer({ doc, onClose, canEdit, onEdit, onDelete }: Props) {
+export function DocumentViewer({ doc, onClose, canEdit, onEdit, onDelete, editingBy }: Props) {
   const paper = useMemo(() => {
     if (!doc) return null;
     try {
@@ -44,6 +46,13 @@ export function DocumentViewer({ doc, onClose, canEdit, onEdit, onDelete }: Prop
     >
       {doc && (
         <Stack w={{ base: '92vw', md: 880 }} maw="100%">
+          {editingBy && (
+            <Alert variant="light" color="blue" p="xs" icon={<IconPencil size={16} />}>
+              <Text size="sm">
+                <b>{editingBy}</b> está editando este documento agora. Esta prévia mostra a última versão salva.
+              </Text>
+            </Alert>
+          )}
           {paper ? <PaperPreview paper={paper} height="calc(100vh - 230px)" /> : <Alert color="red">Não foi possível abrir a prévia deste documento. Verifique os dados salvos.</Alert>}
           <Group justify="space-between">
             {canEdit ? (

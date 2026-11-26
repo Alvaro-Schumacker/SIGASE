@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { AppUser, Me, Notice, Task, TaskCategory, TaskPriority, TaskStatus } from './types';
 
 export class ApiError extends Error {
-  constructor(message: string, public status: number, public code?: string) {
+  constructor(message: string, public status: number, public code?: string, public data: Record<string, unknown> = {}) {
     super(message);
   }
 }
@@ -28,7 +28,7 @@ export async function api<T>(path: string, options: { method?: string; body?: un
     /* resposta não-JSON */
   }
   if (!response.ok) {
-    throw new ApiError(String(data.error ?? `Falha do servidor (${response.status}).`), response.status, data.code as string | undefined);
+    throw new ApiError(String(data.error ?? `Falha do servidor (${response.status}).`), response.status, data.code as string | undefined, data);
   }
   return data as T;
 }

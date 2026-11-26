@@ -17,6 +17,16 @@
   background: var(--mantine-color-body);
   border-bottom: 1px solid var(--mantine-color-default-border);
 }
+.doc-editor-alerts {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 18px;
+  background: var(--mantine-color-body);
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  animation: rise-in 0.25s ease both;
+}
 .doc-editor-main {
   flex: 1;
   min-height: 0;

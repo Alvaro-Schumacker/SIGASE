@@ -1,10 +1,13 @@
 import { Accordion, ActionIcon, Badge, Button, Card, Group, Menu, SegmentedControl, Skeleton, Stack, Text, ThemeIcon } from '@mantine/core';
-import { IconDots, IconEdit, IconEye, IconFileText, IconFolder, IconPlus, IconPrinter, IconTrash } from '@tabler/icons-react';
+import { modals } from '@mantine/modals';
+import { IconDots, IconEdit, IconEye, IconFileText, IconFolder, IconPencil, IconPlus, IconPrinter, IconTrash } from '@tabler/icons-react';
 import { useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useCurrentUser } from '../../api';
 import { type DocKind, type DocumentRecord, KIND_INFO, REQUIREMENT_CATEGORIES, documentPaper, documentRef, isRequirement, requirementCategory, useDocuments } from '../../data/documents';
 import { confirmDelete, notifyError } from '../../lib/confirm';
+import { type DocEditor, EditSessionContext, joinNames, useEditingNow } from './editSession';
 import { capitalize, fmtDate } from '../../lib/format';
 import { printPaper } from '../../lib/print';
 import { longDate, splitWarName } from '../../print/legacy';
@@ -30,18 +33,51 @@ const KIND_COLOR: Record<DocKind, string> = { aditamento: 'sigase', pernoite: 'b
 export function DocumentArchive({ kinds, title, eyebrow, subtitle, canEdit }: Props) {
   const qc = useQueryClient();
   const [kind, setKind] = useState<DocKind>(kinds[0]);
-  const { data: docs = [], isLoading, error } = useDocuments(kind);
+  const { data: docs = [], isLoading, error, refetch } = useDocuments(kind);
+  const me = useCurrentUser();
+  const { data: editingNow = {} } = useEditingNow(canEdit);
+  /** Outras pessoas com o documento aberto no editor agora. */
+  const othersEditing = (d: DocumentRecord): DocEditor[] => (editingNow[String(d.id)] ?? []).filter((e) => e.user_id !== me.id);
   const [viewing, setViewing] = useState<DocumentRecord | null>(null);
   const [editing, setEditing] = useState<DocumentRecord | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const info = KIND_INFO[kind];
   const requirement = isRequirement(kind);
 
-  const openForm = (d: DocumentRecord | null) => {
+  const startEditing = (d: DocumentRecord | null) => {
     setViewing(null);
     setEditing(d);
     setFormOpen(true);
   };
+  const openForm = (d: DocumentRecord | null) => {
+    const others = d ? othersEditing(d) : [];
+    if (!d || !others.length) return startEditing(d);
+    modals.openConfirmModal({
+      title: 'Documento em edição',
+      children: (
+        <Text size="sm">
+          <b>{joinNames(others.map((e) => e.name))}</b> {others.length > 1 ? 'estão' : 'está'} editando este documento agora. Se os dois salvarem, quem salvar depois será avisado e poderá escolher o que fazer, mas o ideal é combinar antes.
+        </Text>
+      ),
+      labels: { confirm: 'Editar mesmo assim', cancel: 'Cancelar' },
+      onConfirm: () => startEditing(d),
+    });
+  };
+  // Troca o conteúdo do editor pela versão salva mais recente (remonta o editor pela chave).
+  const session = useMemo(
+    () => ({
+      doc: editing,
+      reload: async (doc?: DocumentRecord) => {
+        if (doc) return setEditing(doc);
+        if (!editing) return;
+        const fresh = (await refetch()).data?.find((x) => x.id === editing.id);
+        if (fresh) setEditing(fresh);
+        else notifyError(new Error('Este documento foi excluído por outra pessoa.'), 'Documento não encontrado');
+      },
+    }),
+    [editing, refetch],
+  );
+  const editorKey = `${editing?.id ?? 'novo'}-${editing?.updated_at ?? ''}`;
   const closeForm = () => setFormOpen(false);
   const remove = (d: DocumentRecord) => confirmDelete({ label: 'documento', path: `/api/documents/${d.id}`, qc, invalidate: [['documents', d.kind]], onDone: () => setViewing(null) });
   const print = (d: DocumentRecord) => {
@@ -64,6 +100,11 @@ export function DocumentArchive({ kinds, title, eyebrow, subtitle, canEdit }: Pr
           <Text fw={700} size="sm" truncate>
             {capitalize(KIND_INFO[d.kind].label)} · {documentRef(d, longDate)}
           </Text>
+          {othersEditing(d).length > 0 && (
+            <Badge size="xs" variant="light" color="blue" tt="none" leftSection={<IconPencil size={11} />} mb={2}>
+              {joinNames(othersEditing(d).map((e) => e.name))} editando agora
+            </Badge>
+          )}
           <Text size="xs" c="dimmed" truncate>
             {fmtDate(d.document_date)} · {splitWarName(d.data?.militaryName).full || d.data?.mainSigner || d.data?.unit || d.data?.profile?.full_name || 'Unidade'}
           </Text>
@@ -228,12 +269,14 @@ export function DocumentArchive({ kinds, title, eyebrow, subtitle, canEdit }: Pr
         {!isLoading && !!docs.length && content}
       </div>
 
-      <DocumentViewer doc={viewing} onClose={() => setViewing(null)} canEdit={canEdit} onEdit={openForm} onDelete={remove} />
-      {kind === 'aditamento' && <AditamentoEditor opened={formOpen} onClose={closeForm} existing={editing} saved={docs} />}
-      {kind === 'pernoite' && <PernoiteEditor opened={formOpen} onClose={closeForm} existing={editing} saved={docs} />}
-      {kind === 'fatd' && <FatdEditor opened={formOpen} onClose={closeForm} existing={editing} saved={docs} />}
-      {kind === 'prorrogacao' && <ProrrogacaoEditor opened={formOpen} onClose={closeForm} existing={editing} saved={docs} />}
-      {kind === 'adiantamento13' && <AdiantamentoEditor opened={formOpen} onClose={closeForm} existing={editing} saved={docs} />}
+      <DocumentViewer doc={viewing} onClose={() => setViewing(null)} canEdit={canEdit} onEdit={openForm} onDelete={remove} editingBy={viewing ? joinNames(othersEditing(viewing).map((e) => e.name)) : ''} />
+      <EditSessionContext.Provider value={session}>
+        {kind === 'aditamento' && <AditamentoEditor opened={formOpen} onClose={closeForm} key={editorKey} existing={editing} saved={docs} />}
+        {kind === 'pernoite' && <PernoiteEditor opened={formOpen} onClose={closeForm} key={editorKey} existing={editing} saved={docs} />}
+        {kind === 'fatd' && <FatdEditor opened={formOpen} onClose={closeForm} key={editorKey} existing={editing} saved={docs} />}
+        {kind === 'prorrogacao' && <ProrrogacaoEditor opened={formOpen} onClose={closeForm} key={editorKey} existing={editing} saved={docs} />}
+        {kind === 'adiantamento13' && <AdiantamentoEditor opened={formOpen} onClose={closeForm} key={editorKey} existing={editing} saved={docs} />}
+      </EditSessionContext.Provider>
     </>
   );
 }

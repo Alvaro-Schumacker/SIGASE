@@ -1,7 +1,10 @@
-import { Badge, Button, Group, Portal, Stack, Text } from '@mantine/core';
+import { Alert, Avatar, Badge, Button, Group, Portal, Stack, Text, Tooltip } from '@mantine/core';
 import { modals } from '@mantine/modals';
-import { IconArrowLeft, IconDeviceFloppy } from '@tabler/icons-react';
+import { IconArrowLeft, IconDeviceFloppy, IconRefresh, IconTrashX, IconUsers } from '@tabler/icons-react';
 import { type ReactNode, useEffect, useRef } from 'react';
+import { useCurrentUser } from '../../api';
+import { UserAvatar } from '../UserAvatar';
+import { joinNames, stampLabel, useDocumentPresence, useEditSession } from '../docs/editSession';
 import './paper.css';
 
 interface Props {
@@ -20,6 +23,13 @@ interface Props {
 /** Editor em tela cheia: a folha A4 no centro e as ferramentas de automação ao lado. */
 export function DocEditorShell({ opened, eyebrow, title, dirty, saving, submitLabel, onCancel, onSave, sidebar, children }: Props) {
   const canvas = useRef<HTMLDivElement>(null);
+  const session = useEditSession();
+  const me = useCurrentUser();
+  const loaded = session?.doc;
+  const { editors, saved, missing } = useDocumentPresence(loaded?.id, opened);
+  // Alguém salvou uma versão diferente da que está aberta aqui.
+  const newer = !!saved && !!loaded?.updated_at && saved.updated_at !== loaded.updated_at;
+  const savedBy = !saved ? '' : saved.user_id === me.id ? 'Você (em outra janela)' : saved.name || 'Outra pessoa';
 
   // Trava a rolagem da página de fundo e permite salvar com Ctrl+S.
   useEffect(() => {
@@ -62,6 +72,17 @@ export function DocEditorShell({ opened, eyebrow, title, dirty, saving, submitLa
         })
       : onCancel();
 
+  const reload = () =>
+    dirty
+      ? modals.openConfirmModal({
+          title: 'Carregar a versão salva?',
+          children: <Text size="sm">As alterações que você fez aqui e ainda não salvou serão descartadas.</Text>,
+          labels: { confirm: 'Descartar e carregar', cancel: 'Continuar editando' },
+          confirmProps: { color: 'red' },
+          onConfirm: () => session?.reload(),
+        })
+      : session?.reload();
+
   if (!opened) return null;
   return (
     <Portal>
@@ -92,6 +113,43 @@ export function DocEditorShell({ opened, eyebrow, title, dirty, saving, submitLa
             {submitLabel}
           </Button>
         </div>
+        {(missing || newer || editors.length > 0) && (
+          <div className="doc-editor-alerts">
+            {missing && (
+              <Alert variant="light" color="red" p="xs" icon={<IconTrashX size={18} />}>
+                <Text size="sm">Este documento foi excluído por outra pessoa. Se salvar, o SIGASE vai avisar que ele não existe mais.</Text>
+              </Alert>
+            )}
+            {!missing && newer && (
+              <Alert variant="light" color="orange" p="xs" icon={<IconRefresh size={18} />}>
+                <Group justify="space-between" gap="xs" wrap="nowrap">
+                  <Text size="sm">
+                    <b>{savedBy}</b> salvou uma versão nova{stampLabel(saved!.updated_at) ? ` às ${stampLabel(saved!.updated_at)}` : ''} enquanto você edita. Se você salvar agora, o SIGASE vai perguntar o que fazer.
+                  </Text>
+                  <Button size="compact-sm" variant="light" color="orange" onClick={reload} style={{ flexShrink: 0 }}>
+                    Carregar a versão nova
+                  </Button>
+                </Group>
+              </Alert>
+            )}
+            {!missing && editors.length > 0 && (
+              <Alert variant="light" color="blue" p="xs" icon={<IconUsers size={18} />}>
+                <Group gap="sm" wrap="nowrap">
+                  <Avatar.Group spacing="xs">
+                    {editors.map((e) => (
+                      <Tooltip key={e.user_id} label={`${e.name} · aberto ${stampLabel(e.since) ? `às ${stampLabel(e.since)}` : 'agora'}`} withArrow>
+                        <UserAvatar name={e.name} icon={e.avatar_icon} size={26} />
+                      </Tooltip>
+                    ))}
+                  </Avatar.Group>
+                  <Text size="sm">
+                    <b>{joinNames(editors.map((e) => e.name))}</b> {editors.length > 1 ? 'também estão' : 'também está'} com este documento aberto agora. Combinem antes de salvar: quem salvar depois será avisado e poderá escolher o que fazer.
+                  </Text>
+                </Group>
+              </Alert>
+            )}
+          </div>
+        )}
         <div className="doc-editor-main">
           <div className="doc-editor-canvas" ref={canvas}>
             {children}
