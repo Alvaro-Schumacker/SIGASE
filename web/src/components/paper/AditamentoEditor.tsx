@@ -244,12 +244,11 @@ export function AditamentoEditor({ opened, onClose, existing, saved }: Props) {
     </div>
   );
 
-  const title = (editable: boolean) => (
+  const title = (
     <>
       <div className="doc-title">
-        ADITAMENTO AO BOLETIM INTERNO Nr{' '}
-        {editable ? <InlineInput value={bulletin} onChange={setBulletin} inlineWidth={4} invalid={req(bulletin)} placeholder="000" maxLength={30} /> : bulletin} DE{' '}
-        {editable ? <InlineDate value={bulletinDate} onChange={setBulletinDate} weekday={false} upper invalid={req(bulletinDate)} /> : bulletinDate ? fmtDate(bulletinDate) : ''}
+        ADITAMENTO AO BOLETIM INTERNO Nr <InlineInput value={bulletin} onChange={setBulletin} inlineWidth={4} invalid={req(bulletin)} placeholder="000" maxLength={30} /> DE{' '}
+        <InlineDate value={bulletinDate} onChange={setBulletinDate} weekday={false} upper invalid={req(bulletinDate)} />
       </div>
       <div className="doc-intro">Para conhecimento desta bateria e devida execução publico o seguinte:</div>
       <div className="doc-part">1ª PARTE – SERVIÇOS DIÁRIOS</div>
@@ -411,11 +410,6 @@ export function AditamentoEditor({ opened, onClose, existing, saved }: Props) {
     </>
   );
 
-  // Dois dias por folha, como na impressão; partes e assinaturas na última.
-  const chunks: number[][] = [];
-  for (let i = 0; i < days.length; i += 2) chunks.push([i, i + 1].filter((x) => x < days.length));
-  if (!chunks.length) chunks.push([]);
-
   const sidebar = (
     <>
       <SideCard title="Automação pela escala" icon={<IconWand size={16} />}>
@@ -477,7 +471,7 @@ export function AditamentoEditor({ opened, onClose, existing, saved }: Props) {
 
       <Alert variant="light" color="gray" p="xs">
         <Text size="xs">
-          Clique em qualquer texto sublinhado para editar. Elementos em verde-claro (grupos, botões “+”) servem só para a edição e não saem na impressão.
+          Clique em qualquer texto sublinhado para editar. Elementos em verde-claro (grupos, botões “+”) servem só para a edição e não saem na impressão. Na impressão, as páginas são divididas automaticamente, sem partir dias nem avisos.
         </Text>
       </Alert>
     </>
@@ -495,23 +489,18 @@ export function AditamentoEditor({ opened, onClose, existing, saved }: Props) {
       onSave={submit}
       sidebar={sidebar}
     >
-      {chunks.map((chunk, ci) => (
-        <div key={ci} className="doc-sheet">
-          {header}
-          {title(ci === 0)}
-          {chunk.map((di) => dayBlock(days[di], di))}
-          {ci === chunks.length - 1 && (
-            <>
-              <div className="doc-center" style={{ margin: '1mm 0 3mm' }}>
-                <button type="button" className="doc-add" onClick={addDay}>
-                  + adicionar dia
-                </button>
-              </div>
-              {parts}
-            </>
-          )}
+      {/* Folha corrida, como na impressão: cabeçalho e título só no início; as páginas são divididas na hora de imprimir. */}
+      <div className="doc-sheet doc-sheet-framed">
+        {header}
+        {title}
+        {days.map((day, di) => dayBlock(day, di))}
+        <div className="doc-center" style={{ margin: '1mm 0 3mm' }}>
+          <button type="button" className="doc-add" onClick={addDay}>
+            + adicionar dia
+          </button>
         </div>
-      ))}
+        {parts}
+      </div>
     </DocEditorShell>
   );
 }

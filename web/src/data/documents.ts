@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api';
 import type { Paper } from '../lib/print';
-import { adiantamentoStyles, printStyles, printTitleOverrides, prorrogacaoStyles, renderDocumentMarkup } from '../print/legacy';
+import { adiantamentoStyles, aditamentoPrintStyles, fatdPrintStyles, framedPrintStyles, printStyles, printTitleOverrides, prorrogacaoStyles, renderDocumentMarkup } from '../print/legacy';
 
 export type DocKind = 'aditamento' | 'pernoite' | 'fatd' | 'prorrogacao' | 'adiantamento13';
 
@@ -55,7 +55,7 @@ export const REQUIREMENT_CATEGORIES = ['Sargentos Carreira', 'Sargentos Temporá
 export function documentPaper(doc: DocumentRecord): Paper {
   const markup = renderDocumentMarkup(doc);
   const req = isRequirement(doc.kind);
-  const css = `${printStyles}${printTitleOverrides}${req ? prorrogacaoStyles : ''}${doc.kind === 'adiantamento13' ? adiantamentoStyles : ''}html,body{margin:0;padding:0;background:#fff}`;
+  const css = `${printStyles}${printTitleOverrides}${req ? prorrogacaoStyles : ''}${doc.kind === 'adiantamento13' ? adiantamentoStyles : ''}${doc.kind === 'aditamento' ? aditamentoPrintStyles : ''}${doc.kind === 'aditamento' || doc.kind === 'pernoite' ? framedPrintStyles : ''}${doc.kind === 'fatd' ? fatdPrintStyles : ''}html,body{margin:0;padding:0;background:#fff}`;
   return {
     body: markup,
     css,

@@ -6,13 +6,14 @@ import { api } from '../api';
 
 /** Notas da versão: aparecem uma vez por usuário (ciência registrada no banco, como na versão atual). */
 export const RELEASE = {
-  version: '2.3.0',
-  title: 'Edição simultânea sem perder trabalho',
+  version: '2.4.0',
+  title: 'Impressão sem cortes e com moldura',
   entries: [
-    'Se alguém salvar o documento enquanto você edita, o SIGASE avisa e nada é sobrescrito.',
-    'Você escolhe: ver a versão do colega, carregá-la ou salvar a sua por cima.',
-    'A lista mostra quem está editando cada documento agora.',
-    'Dentro do editor aparece quem mais está com o documento aberto e quando sai uma versão nova.',
+    'Aditamento com cabeçalho e título só na primeira folha.',
+    'Dias, avisos e assinaturas não são mais partidos entre páginas.',
+    'Aditamento e pernoite impressos dentro de uma caixa, com margem segura em todas as folhas.',
+    'FATD com margens: a caixa do formulário sai inteira.',
+    'Sem data, endereço do site e número de página nos cantos da impressão.',
   ],
 };
 

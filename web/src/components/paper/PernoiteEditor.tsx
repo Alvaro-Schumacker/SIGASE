@@ -386,7 +386,7 @@ export function PernoiteEditor({ opened, onClose, existing, saved }: Props) {
       onSave={submit}
       sidebar={sidebar}
     >
-      <div className="doc-sheet" style={{ fontSize: '9.5pt' }}>
+      <div className="doc-sheet doc-sheet-framed" style={{ fontSize: '9.5pt' }}>
         <div style={{ ...box, display: 'grid', gridTemplateColumns: '34mm 1fr', minHeight: '44mm' }}>
           <aside style={{ borderRight: '1px solid #222', textAlign: 'center', padding: '2mm', display: 'flex', flexDirection: 'column', justifyContent: 'space-around', fontSize: '9pt' }}>
             <i>VISTO:</i>

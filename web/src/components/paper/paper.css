@@ -65,6 +65,8 @@
   animation: rise-in 260ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
 .doc-sheet * { box-sizing: border-box; }
+/* Moldura da impressão (aditamento e pernoite): caixa a 10 mm da borda, texto 6 mm para dentro. */
+.doc-sheet-framed { padding: 16mm; outline: 1px solid #222; outline-offset: -10mm; }
 .doc-center { text-align: center; }
 .doc-header { display: flex; flex-direction: column; align-items: center; font-weight: bold; line-height: 1.12; font-size: 10.5pt; }
 .doc-title { text-align: center; font-weight: bold; text-decoration: underline; font-size: 12.5pt; margin: 6mm 0 3mm; line-height: 1.3; }
