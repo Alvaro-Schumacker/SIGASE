@@ -99,6 +99,10 @@ export interface VacationPeriod {
   period_total: number;
   reference_year: number;
   task_added: 0 | 1;
+  /** 'periodo' = parcela de férias; 'desconto' = desconto em férias (sai da última parcela). */
+  entry_type?: 'periodo' | 'desconto';
+  /** Divisão das férias da referência ('30', '15+15', '20+10', '10+10+10'; vazio em lançamentos antigos). */
+  split_plan?: string;
 }
 
 export interface TaskCategory {

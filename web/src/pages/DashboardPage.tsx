@@ -54,7 +54,7 @@ export function DashboardPage() {
     const events: { date: string; label: string; name: string }[] = [];
     for (const p of periods) {
       const name = `${p.rank || ''} ${p.full_name}`.trim();
-      if (p.start_date >= today) events.push({ date: p.start_date, label: 'Início das férias', name });
+      if (p.start_date >= today) events.push({ date: p.start_date, label: p.entry_type === 'desconto' ? 'Desconto em férias' : 'Início das férias', name });
       if (p.presentation_date >= today) events.push({ date: p.presentation_date, label: 'Apresentação', name });
     }
     return events.sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name, 'pt-BR')).slice(0, 4);

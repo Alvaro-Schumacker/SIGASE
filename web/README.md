@@ -1,8 +1,8 @@
 # SIGASE · Nova interface (React)
 
-Nova interface do SIGASE em **React + Mantine**, com tema claro/escuro e layout para celular.
-O backend (`server.py`), a API e o banco Supabase são os mesmos da versão clássica: nada muda nos dados,
-e as duas versões podem ser usadas ao mesmo tempo.
+Interface do SIGASE em **React + Mantine**, com tema claro/escuro e layout para celular. É a interface
+principal: abre no endereço raiz (`/`). A versão clássica continua disponível em `/classico/` e o endereço
+antigo `/novo/` redireciona para a raiz. Backend (`server.py`), API e banco são os mesmos.
 
 ## Telas
 
@@ -30,7 +30,7 @@ cd ..
 python server.py
 ```
 
-Abra **http://127.0.0.1:8000/novo/**. A versão clássica continua em **http://127.0.0.1:8000/**.
+Abra **http://127.0.0.1:8000/**. A versão clássica fica em **http://127.0.0.1:8000/classico/**.
 Sempre que o código em `web/src` mudar, rode `npm.cmd run build` de novo.
 
 ## Desenvolvimento (atualiza a tela a cada alteração)
@@ -42,7 +42,7 @@ cd web
 npm.cmd run dev
 ```
 
-Abra **http://127.0.0.1:5173/novo/**. O Vite repassa `/api` e `/assets` para o `server.py` (porta 8000).
+Abra **http://127.0.0.1:5173/**. O Vite repassa `/api` e `/assets` para o `server.py` (porta 8000).
 
 ## Estrutura
 

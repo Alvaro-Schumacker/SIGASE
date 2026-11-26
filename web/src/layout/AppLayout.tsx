@@ -77,7 +77,7 @@ export function AppLayout() {
             <Image className="brand-logo" src="/assets/brand/sigase-logo.png" h={30} w="auto" fit="contain" alt="SIGASE" />
           </Group>
           <Group gap="xs" wrap="nowrap">
-            <Button component="a" href="/" variant="subtle" color="gray" size="xs" rightSection={<IconExternalLink size={14} />} visibleFrom="sm">
+            <Button component="a" href="/classico/" variant="subtle" color="gray" size="xs" rightSection={<IconExternalLink size={14} />} visibleFrom="sm">
               Versão clássica
             </Button>
             <ReleaseNotes />

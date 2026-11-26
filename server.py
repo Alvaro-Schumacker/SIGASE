@@ -22,9 +22,12 @@ BASE_DIR = Path(__file__).resolve().parent
 IS_HOSTED = "PORT" in os.environ
 # Only these files (plus anything under /assets/) are served as static content.
 # Everything else in the project folder (.env, server.py, .git, backups) stays private.
-STATIC_FILES = {"/": "/index.html", "/index.html": "/index.html", "/app.js": "/app.js", "/styles.css": "/styles.css"}
+# Versão clássica (index.html, app.js, styles.css na raiz do projeto) — agora em /classico/.
+CLASSIC_FILES = {"/classico": "/index.html", "/classico/index.html": "/index.html", "/app.js": "/app.js", "/styles.css": "/styles.css"}
 STATIC_PREFIXES = ("/assets/",)
+# Interface atual (React), gerada em web/dist por "npm run build", servida na raiz.
 REACT_DIST_DIR = BASE_DIR / "web" / "dist"
+REACT_ASSET_PREFIX = "/app/"
 LOGIN_MAX_FAILURES = 5
 LOGIN_WINDOW_SECONDS = 15 * 60
 LOGIN_LOCK_SECONDS = 15 * 60
@@ -93,6 +96,8 @@ PROFILE_ICONS = {"01_soldado_camuflado.png", "02_soldado_tatico.png", "03_oficia
 REQUEST_ACTOR = threading.local()
 EDIT_AREAS = {"tasks", "unit", "scales", "documents", "requirements", "force_maps", "vacation"}
 REQUIREMENT_KINDS = {"prorrogacao", "adiantamento13"}
+# Divisões aceitas das férias (dias de cada parcela). O desconto em férias sai da última parcela.
+VACATION_SPLITS = {1: ("30",), 2: ("15+15", "20+10"), 3: ("10+10+10",)}
 
 
 def _scale_assignment_service(value):
@@ -424,17 +429,20 @@ class SigaseHandler(SimpleHTTPRequestHandler):
         """Map a request path to an allowed static file path, or None if it must not be served."""
         raw = urlparse(self.path).path
         decoded = posixpath.normpath(unquote(raw))
-        # Protótipo React (web/dist, gerado com "npm run build" dentro de web/), servido em /novo/.
-        if decoded == "/novo" or decoded.startswith("/novo/"):
-            relative = decoded[len("/novo"):].lstrip("/") or "index.html"
-            if any(part.startswith(".") for part in relative.split("/")):
+        react_index = REACT_DIST_DIR / "index.html"
+        # Raiz: interface atual (React). Se o build não existir, cai na versão clássica.
+        if decoded in ("/", "/index.html"):
+            return "/web/dist/index.html" if react_index.is_file() else "/index.html"
+        # Arquivos gerados pelo build do React (/app/...).
+        if decoded.startswith(REACT_ASSET_PREFIX):
+            relative = decoded[1:]
+            if any(part.startswith(".") for part in relative.split("/")) or not (REACT_DIST_DIR / relative).is_file():
                 return None
-            candidate = REACT_DIST_DIR / relative
-            return f"/web/dist/{relative}" if candidate.is_file() else None
+            return f"/web/dist/{relative}"
+        if decoded in CLASSIC_FILES:
+            return CLASSIC_FILES[decoded]
         if raw.endswith("/") and raw != "/":
             return None
-        if decoded in STATIC_FILES:
-            return STATIC_FILES[decoded]
         if decoded.startswith(STATIC_PREFIXES):
             parts = decoded.split("/")
             if any(part.startswith(".") for part in parts if part) or not (BASE_DIR / decoded.lstrip("/")).is_file():
@@ -443,6 +451,22 @@ class SigaseHandler(SimpleHTTPRequestHandler):
         return None
 
     def _serve_static(self) -> None:
+        raw = urlparse(self.path).path
+        decoded = posixpath.normpath(unquote(raw))
+        # Endereço antigo da interface nova: redireciona para a raiz (o navegador mantém o #/tela).
+        if decoded == "/novo" or decoded.startswith("/novo/"):
+            self.send_response(301)
+            self.send_header("Location", "/")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        # /classico (sem barra) vira /classico/ para os caminhos relativos funcionarem.
+        if raw == "/classico":
+            self.send_response(301)
+            self.send_header("Location", "/classico/")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         target = self._static_target()
         if target is None:
             self._json(404, {"error": "Arquivo não encontrado."})
@@ -1072,7 +1096,11 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 if not db.execute("SELECT 1 FROM unit_personnel WHERE id=?", (record["person_id"],)).fetchone():
                     self._json(400, {"error": "Selecione uma pessoa cadastrada no efetivo."})
                     return
-                cur = db.execute("INSERT INTO vacation_plan (person_id,start_date,end_date,travel_days,vacation_days,presentation_date,period_number,period_total,reference_year,updated_at) VALUES (?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)", tuple(record.values()))
+                rule_error = self._vacation_rules_error(db, record)
+                if rule_error:
+                    self._json(400, {"error": rule_error})
+                    return
+                cur = db.execute("INSERT INTO vacation_plan (person_id,start_date,end_date,travel_days,vacation_days,presentation_date,period_number,period_total,reference_year,entry_type,split_plan,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)", tuple(record.values()))
                 row = db.execute("SELECT v.*, p.full_name, p.rank FROM vacation_plan v JOIN unit_personnel p ON p.id=v.person_id WHERE v.id=?", (cur.lastrowid,)).fetchone()
                 self._sync_vacation_notices(db, row, created_by)
             self._json(201, {"period": dict(row)})
@@ -1423,7 +1451,11 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 if not exists or not person:
                     self._json(404, {"error": "Período ou ficha do efetivo não encontrado."})
                     return
-                db.execute("UPDATE vacation_plan SET person_id=?,start_date=?,end_date=?,travel_days=?,vacation_days=?,presentation_date=?,period_number=?,period_total=?,reference_year=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (*record.values(), vacation_id))
+                rule_error = self._vacation_rules_error(db, record, vacation_id)
+                if rule_error:
+                    self._json(400, {"error": rule_error})
+                    return
+                db.execute("UPDATE vacation_plan SET person_id=?,start_date=?,end_date=?,travel_days=?,vacation_days=?,presentation_date=?,period_number=?,period_total=?,reference_year=?,entry_type=?,split_plan=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (*record.values(), vacation_id))
                 row = db.execute("SELECT v.*, p.full_name, p.rank FROM vacation_plan v JOIN unit_personnel p ON p.id=v.person_id WHERE v.id=?", (vacation_id,)).fetchone()
                 self._sync_vacation_notices(db, row, updated_by)
             self._json(200, {"period": dict(row)})
@@ -1710,24 +1742,54 @@ class SigaseHandler(SimpleHTTPRequestHandler):
             person_id = int(data.get("person_id"))
             start = date.fromisoformat(data.get("start_date", ""))
             end = date.fromisoformat(data.get("end_date", ""))
-            period_number = int(data.get("period_number"))
-            period_total = int(data.get("period_total"))
+            period_number = int(data.get("period_number", 1))
+            period_total = int(data.get("period_total", 1))
             reference_year_value = data.get("reference_year")
             reference_year = int(reference_year_value) if reference_year_value is not None else (2025 if start < date(2026, 12, 1) else 2026)
         except (TypeError, ValueError):
             return {}, "Preencha pessoa, período e datas válidas."
         if end < start:
             return {}, "A data de término deve ser igual ou posterior ao início."
-        if period_total not in (1, 2, 3) or period_number < 1 or period_number > period_total:
-            return {}, "Selecione um período válido (até 3 parcelas)."
-        if reference_year not in (2025, 2026):
-            return {}, "Selecione o ano de referência 2025 ou 2026."
+        if not 2000 <= reference_year <= 2100:
+            return {}, "Informe um ano de referência válido."
+        entry_type = data.get("entry_type") or "periodo"
+        if entry_type not in ("periodo", "desconto"):
+            return {}, "Tipo de lançamento inválido."
         travel_days = data.get("travel_days")
-        if travel_days not in (True, False, 0, 1):
+        if travel_days not in (True, False, 0, 1, None):
             return {}, "Informe se há dias adicionais de deslocamento."
+        split_plan = str(data.get("split_plan") or "")
+        if entry_type == "desconto":
+            # Desconto em férias: dias avulsos, sem parcela própria e sem deslocamento.
+            period_number, period_total, split_plan, travel_days = 1, 1, "", False
+        else:
+            if period_total not in (1, 2, 3) or period_number < 1 or period_number > period_total:
+                return {}, "Selecione um período válido (até 3 parcelas)."
+            if split_plan and split_plan not in VACATION_SPLITS[period_total]:
+                return {}, "Divisão das férias inválida: use 30, 15+15, 20+10 ou 10+10+10."
         days = (end - start).days + 1
+        if days > 30:
+            return {}, "Um lançamento de férias não pode passar de 30 dias."
         presentation = end.toordinal() + (2 if bool(travel_days) else 0) + 1
-        return {"person_id": person_id, "start_date": start.isoformat(), "end_date": end.isoformat(), "travel_days": int(bool(travel_days)), "vacation_days": days, "presentation_date": date.fromordinal(presentation).isoformat(), "period_number": period_number, "period_total": period_total, "reference_year": reference_year}, None
+        return {"person_id": person_id, "start_date": start.isoformat(), "end_date": end.isoformat(), "travel_days": int(bool(travel_days)), "vacation_days": days, "presentation_date": date.fromordinal(presentation).isoformat(), "period_number": period_number, "period_total": period_total, "reference_year": reference_year, "entry_type": entry_type, "split_plan": split_plan}, None
+
+    @staticmethod
+    def _vacation_rules_error(db, record: dict, vacation_id: int | None = None) -> str | None:
+        """Regras que dependem dos outros lançamentos do militar na mesma referência."""
+        others = db.execute(
+            "SELECT id, entry_type, vacation_days, travel_days, start_date FROM vacation_plan WHERE person_id=? AND reference_year=?",
+            (record["person_id"], record["reference_year"]),
+        ).fetchall()
+        others = [row for row in others if row["id"] != vacation_id]
+        if record["travel_days"]:
+            used = next((row for row in others if row["travel_days"]), None)
+            if used:
+                when = date.fromisoformat(used["start_date"]).strftime("%d/%m/%Y")
+                return f"Os 2 dias de deslocamento já foram usados por este militar na REF {record['reference_year']} (lançamento iniciado em {when})."
+        total = sum(int(row["vacation_days"] or 0) for row in others) + record["vacation_days"]
+        if total > 30:
+            return f"Na REF {record['reference_year']} este militar ficaria com {total} dias lançados; o máximo é 30 (incluindo descontos)."
+        return None
 
     @staticmethod
     def _validate_person(data: dict) -> tuple[dict, str | None]:
@@ -1944,7 +2006,17 @@ class SigaseHandler(SimpleHTTPRequestHandler):
         end = date.fromisoformat(period["end_date"]).strftime("%d/%m/%Y")
         presentation = date.fromisoformat(period["presentation_date"]).strftime("%d/%m/%Y")
         travel = "Os dois dias de deslocamento foram considerados." if period["travel_days"] else "Não há dias adicionais de deslocamento."
-        records = [
+        ref = period.get("reference_year")
+        if period.get("entry_type") == "desconto":
+            days = period["vacation_days"]
+            records = [(
+                f"Desconto em férias · {rank_name}",
+                f"{days} dia(s) de desconto em férias de {rank_name} (REF {ref}): {start} a {end}. Apresentação em {presentation}. Os dias saem da última parcela.",
+                period["start_date"],
+            )]
+        else:
+            records = None
+        records = records or [
             (f"Início das férias · {rank_name}", f"Início do período {period['period_number']}/{period['period_total']} de férias de {rank_name}. Período: {start} a {end}.", period["start_date"]),
             (f"Apresentação de férias · {rank_name}", f"Apresentação prevista de {rank_name} em {presentation}, após o período {period['period_number']}/{period['period_total']} (término em {end}). {travel}", period["presentation_date"]),
         ]

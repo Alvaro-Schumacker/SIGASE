@@ -6,13 +6,14 @@ import { api } from '../api';
 
 /** Notas da versão: aparecem uma vez por usuário (ciência registrada no banco, como na versão atual). */
 export const RELEASE = {
-  version: '2.1.0',
-  title: 'Negrito do nome de guerra',
+  version: '2.2.0',
+  title: 'Plano de férias renovado',
   entries: [
-    'Selecione parte do nome na folha e aperte Ctrl+B para marcar o negrito.',
-    'Iniciais abreviadas no nome de guerra (ex.: “M. Fonseca”) deixam só a letra em negrito.',
-    'O nome inteiro não fica mais em negrito quando o nome de guerra não é encontrado.',
-    'Prorrogação: punições e situação na OM já vêm preenchidas em novos requerimentos.',
+    'Calendário em linha do tempo: uma linha por militar, com parcela, dias e referência.',
+    'Desconto em férias, que sai automaticamente da última parcela.',
+    'Divisões 30, 15+15, 20+10 e 10+10+10, e qualquer ano de referência.',
+    'Deslocamento liberado uma vez por referência, com aviso quando já foi usado.',
+    'Nova aba “Saldo por militar”. A versão clássica agora fica em /classico/.',
   ],
 };
 
