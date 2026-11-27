@@ -6,14 +6,14 @@ import { api } from '../api';
 
 /** Notas da versão: aparecem uma vez por usuário (ciência registrada no banco, como na versão atual). */
 export const RELEASE = {
-  version: '2.4.0',
-  title: 'Impressão sem cortes e com moldura',
+  version: '2.5.0',
+  title: 'Importação de planilhas',
   entries: [
-    'Aditamento com cabeçalho e título só na primeira folha.',
-    'Dias, avisos e assinaturas não são mais partidos entre páginas.',
-    'Aditamento e pernoite impressos dentro de uma caixa, com margem segura em todas as folhas.',
-    'FATD com margens: a caixa do formulário sai inteira.',
-    'Sem data, endereço do site e número de página nos cantos da impressão.',
+    'Plano de férias: importe a planilha .xlsx inteira, sem lançar um por um.',
+    'Dados da Unidade: importe a planilha da bateria; cria novos cadastros e completa os existentes.',
+    'Tela de conferência antes de gravar: militar, datas, parcelas e cada dado que vai mudar.',
+    'Erros de digitação comuns são corrigidos ou apontados (ano das datas, CPF, telefone, filiação).',
+    'Reimportar a mesma planilha não duplica nada.',
   ],
 };
 

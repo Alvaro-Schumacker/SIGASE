@@ -1,6 +1,6 @@
 import { Accordion, ActionIcon, Alert, Badge, Button, Card, Group, Progress, SimpleGrid, Skeleton, Stack, Tabs, Text, TextInput, ThemeIcon, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconAlertTriangle, IconCalendarMonth, IconChartBar, IconEdit, IconList, IconPlus, IconSearch, IconTrash } from '@tabler/icons-react';
+import { IconAlertTriangle, IconCalendarMonth, IconChartBar, IconEdit, IconFileSpreadsheet, IconList, IconPlus, IconSearch, IconTrash } from '@tabler/icons-react';
 import { useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
@@ -8,6 +8,7 @@ import { useCurrentUser } from '../api';
 import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
 import { VacationFormModal } from '../components/VacationFormModal';
+import { VacationImportModal } from '../components/VacationImportModal';
 import { VacationTimeline } from '../components/VacationTimeline';
 import { sortUnit, useUnitPersonnel } from '../data/unit';
 import { isDiscount, ordinal, summarize, useVacationPlan } from '../data/vacation';
@@ -29,6 +30,7 @@ export function VacationPage() {
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<VacationPeriod | null>(null);
   const [formOpen, form] = useDisclosure();
+  const [importOpen, importer] = useDisclosure();
   const today = todayISO();
 
   const term = search.toLocaleLowerCase('pt-BR');
@@ -103,9 +105,14 @@ export function VacationPage() {
         subtitle="Parcelas, descontos e deslocamento por referência · avisos de início e apresentação são criados automaticamente"
         actions={
           me.canEditVacation && (
-            <Button leftSection={<IconPlus size={18} />} onClick={() => openForm(null)}>
-              Novo lançamento
-            </Button>
+            <Group gap="xs">
+              <Button variant="default" leftSection={<IconFileSpreadsheet size={18} />} onClick={importer.open}>
+                Importar planilha
+              </Button>
+              <Button leftSection={<IconPlus size={18} />} onClick={() => openForm(null)}>
+                Novo lançamento
+              </Button>
+            </Group>
           )
         }
       />
@@ -191,6 +198,7 @@ export function VacationPage() {
       </Tabs>
 
       <VacationFormModal opened={formOpen} onClose={form.close} period={editing} />
+      {me.canEditVacation && <VacationImportModal opened={importOpen} onClose={importer.close} />}
     </>
   );
 }

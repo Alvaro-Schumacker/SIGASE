@@ -590,8 +590,8 @@ class SigaseHandler(SimpleHTTPRequestHandler):
         match = re.fullmatch(r"/api/documents/(\d{1,12})/presence", path)
         return int(match.group(1)) if match else None
 
-    def _body(self) -> dict:
-        size = min(int(self.headers.get("Content-Length", "0")), 32_000)
+    def _body(self, limit: int = 32_000) -> dict:
+        size = min(int(self.headers.get("Content-Length", "0")), limit)
         try:
             parsed = json.loads(self.rfile.read(size) or b"{}")
             return parsed if isinstance(parsed, dict) else {}
@@ -1138,6 +1138,73 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 row = db.execute("SELECT id, name, rank, function, section, status, created_at, updated_at FROM personnel WHERE id=?", (cur.lastrowid,)).fetchone()
             self._json(201, {"person": dict(row)})
             return
+        if path == "/api/unit-personnel/import":
+            # Importação dos dados da bateria (planilha lida no navegador e conferida pelo usuário).
+            # Cria cadastros novos (sem "id") e atualiza existentes (com "id"). Tudo ou nada.
+            if not self._require_area("unit"):
+                return
+            items = self._body(limit=600_000).get("people")
+            if not isinstance(items, list) or not items:
+                self._json(400, {"error": "Nenhum cadastro para importar."})
+                return
+            if len(items) > 400:
+                self._json(400, {"error": "Importe no máximo 400 cadastros por vez."})
+                return
+            prepared, errors = [], []
+            for index, item in enumerate(items):
+                item = item if isinstance(item, dict) else {}
+                person_id = item.get("id")
+                if person_id is not None and (isinstance(person_id, bool) or not isinstance(person_id, int)):
+                    errors.append({"index": index, "error": "Identificador inválido."})
+                    continue
+                # A antiguidade não vem da planilha: novos entram no fim da graduação; existentes mantêm a posição.
+                record, error = self._validate_unit_person({**item, "seniority_order": 1})
+                if error:
+                    errors.append({"index": index, "error": error})
+                    continue
+                prepared.append((index, person_id, record))
+            if errors:
+                self._json(400, {"error": f"{len(errors)} cadastro(s) com problema. Nada foi gravado.", "errors": errors})
+                return
+
+            class ImportAbort(Exception):
+                pass
+
+            created = updated = 0
+            try:
+                with connect_db() as db:
+                    for index, person_id, record in prepared:
+                        if person_id is None:
+                            record["seniority_order"] = None
+                        else:
+                            current = db.execute("SELECT rank, seniority_order FROM unit_personnel WHERE id=?", (person_id,)).fetchone()
+                            if not current:
+                                errors.append({"index": index, "error": "Cadastro não encontrado no efetivo (pode ter sido excluído)."})
+                                raise ImportAbort()
+                            record["seniority_order"] = current["seniority_order"] if current["rank"] == record["rank"] else None
+                        seniority_error = apply_unit_seniority(db, record, person_id)
+                        if seniority_error:
+                            errors.append({"index": index, "error": seniority_error})
+                            raise ImportAbort()
+                        if person_id is None:
+                            db.execute("""
+                                INSERT INTO unit_personnel
+                                (full_name, war_name, birth_date, rank, qm, section, address, cpf, military_id, military_number, seniority_order, additional_data, civil_id, prec_cp, blood_type, email, religion, phone, birth_city, mother_name, father_name, cnh, education, updated_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                            """, tuple(record.values()))
+                            created += 1
+                        else:
+                            db.execute("""
+                                UPDATE unit_personnel SET full_name=?, war_name=?, birth_date=?, rank=?, qm=?, section=?, address=?, cpf=?, military_id=?, military_number=?, seniority_order=?, additional_data=?, civil_id=?, prec_cp=?, blood_type=?, email=?, religion=?, phone=?, birth_city=?, mother_name=?, father_name=?, cnh=?, education=?, updated_at=CURRENT_TIMESTAMP
+                                WHERE id=?
+                            """, (*record.values(), person_id))
+                            updated += 1
+            except ImportAbort:
+                # A exceção dentro do "with" desfaz tudo o que já tinha sido gravado neste lote.
+                self._json(400, {"error": f"{len(errors)} cadastro(s) com problema. Nada foi gravado.", "errors": errors})
+                return
+            self._json(201, {"created": created, "updated": updated})
+            return
         if path == "/api/unit-personnel":
             if not self._require_area("unit"):
                 return
@@ -1190,6 +1257,54 @@ class SigaseHandler(SimpleHTTPRequestHandler):
                 cur = db.execute("INSERT INTO force_maps (activity_date,data_json,updated_at) VALUES (?,?,CURRENT_TIMESTAMP)", (record["activity_date"], json.dumps(record["data"], ensure_ascii=False)))
                 row = db.execute("SELECT * FROM force_maps WHERE id=?", (cur.lastrowid,)).fetchone()
             self._json(201, {"map": self._force_map_record(row)})
+            return
+        if path == "/api/vacation-plan/import":
+            # Importação do plano de férias (planilha lida no navegador e conferida pelo usuário).
+            # Tudo ou nada: se algum lançamento falhar, nenhum é gravado e a resposta diz qual linha corrigir.
+            created_by = self._require_area("vacation")
+            if not created_by:
+                return
+            items = self._body(limit=400_000).get("periods")
+            if not isinstance(items, list) or not items:
+                self._json(400, {"error": "Nenhum lançamento para importar."})
+                return
+            if len(items) > 500:
+                self._json(400, {"error": "Importe no máximo 500 lançamentos por vez."})
+                return
+            records, errors = [], []
+            for index, item in enumerate(items):
+                record, error = self._validate_vacation(item if isinstance(item, dict) else {})
+                if error:
+                    errors.append({"index": index, "error": error})
+                records.append(record)
+            if errors:
+                self._json(400, {"error": f"{len(errors)} lançamento(s) com problema. Nada foi gravado.", "errors": errors})
+                return
+            with connect_db() as db:
+                ids = {r["person_id"] for r in records}
+                known = {row["id"] for row in db.execute("SELECT id FROM unit_personnel WHERE id IN (%s)" % ",".join("?" for _ in ids), tuple(ids)).fetchall()}
+                pending: list[dict] = []
+                for index, record in enumerate(records):
+                    if record["person_id"] not in known:
+                        errors.append({"index": index, "error": "Militar não encontrado no efetivo."})
+                        continue
+                    duplicate = db.execute("SELECT 1 FROM vacation_plan WHERE person_id=? AND start_date=? AND entry_type=?", (record["person_id"], record["start_date"], record["entry_type"])).fetchone()
+                    if duplicate or any(p["person_id"] == record["person_id"] and p["start_date"] == record["start_date"] for p in pending):
+                        errors.append({"index": index, "error": "Já existe um lançamento deste militar com o mesmo início."})
+                        continue
+                    rule_error = self._vacation_rules_error(db, record, pending=pending)
+                    if rule_error:
+                        errors.append({"index": index, "error": rule_error})
+                        continue
+                    pending.append(record)
+                if errors:
+                    self._json(400, {"error": f"{len(errors)} lançamento(s) com problema. Nada foi gravado.", "errors": errors})
+                    return
+                for record in records:
+                    cur = db.execute("INSERT INTO vacation_plan (person_id,start_date,end_date,travel_days,vacation_days,presentation_date,period_number,period_total,reference_year,entry_type,split_plan,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)", tuple(record.values()))
+                    row = db.execute("SELECT v.*, p.full_name, p.rank FROM vacation_plan v JOIN unit_personnel p ON p.id=v.person_id WHERE v.id=?", (cur.lastrowid,)).fetchone()
+                    self._sync_vacation_notices(db, row, created_by)
+            self._json(201, {"created": len(records)})
             return
         if path == "/api/vacation-plan":
             created_by = self._require_area("vacation")
@@ -1911,13 +2026,16 @@ class SigaseHandler(SimpleHTTPRequestHandler):
         return {"person_id": person_id, "start_date": start.isoformat(), "end_date": end.isoformat(), "travel_days": int(bool(travel_days)), "vacation_days": days, "presentation_date": date.fromordinal(presentation).isoformat(), "period_number": period_number, "period_total": period_total, "reference_year": reference_year, "entry_type": entry_type, "split_plan": split_plan}, None
 
     @staticmethod
-    def _vacation_rules_error(db, record: dict, vacation_id: int | None = None) -> str | None:
-        """Regras que dependem dos outros lançamentos do militar na mesma referência."""
+    def _vacation_rules_error(db, record: dict, vacation_id: int | None = None, pending: list[dict] = ()) -> str | None:
+        """Regras que dependem dos outros lançamentos do militar na mesma referência.
+
+        `pending` são lançamentos ainda não gravados do mesmo lote (importação da planilha)."""
         others = db.execute(
             "SELECT id, entry_type, vacation_days, travel_days, start_date FROM vacation_plan WHERE person_id=? AND reference_year=?",
             (record["person_id"], record["reference_year"]),
         ).fetchall()
         others = [row for row in others if row["id"] != vacation_id]
+        others += [{"id": None, **item} for item in pending if item["person_id"] == record["person_id"] and item["reference_year"] == record["reference_year"]]
         if record["travel_days"]:
             used = next((row for row in others if row["travel_days"]), None)
             if used:

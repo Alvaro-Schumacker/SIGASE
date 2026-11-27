@@ -1,11 +1,12 @@
 import { ActionIcon, Alert, Badge, Button, Card, Drawer, Group, Menu, SimpleGrid, Skeleton, Stack, Table, Text, TextInput, ThemeIcon, Title, Tooltip } from '@mantine/core';
 import { useDebouncedValue, useDisclosure, useMediaQuery } from '@mantine/hooks';
-import { IconAlertTriangle, IconDots, IconEdit, IconEye, IconPlus, IconSearch, IconTrash, IconUsersGroup } from '@tabler/icons-react';
+import { IconAlertTriangle, IconDots, IconEdit, IconEye, IconFileSpreadsheet, IconPlus, IconSearch, IconTrash, IconUsersGroup } from '@tabler/icons-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { useCurrentUser } from '../api';
 import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
+import { UnitImportModal } from '../components/UnitImportModal';
 import { UnitPersonForm } from '../components/UnitPersonForm';
 import { identity, missingFields, type UnitPerson, UNIT_RANKS, useUnitPersonnel } from '../data/unit';
 import { confirmDelete } from '../lib/confirm';
@@ -20,6 +21,7 @@ export function UnitPage() {
   const [viewing, setViewing] = useState<UnitPerson | null>(null);
   const [editing, setEditing] = useState<UnitPerson | null>(null);
   const [formOpen, form] = useDisclosure();
+  const [importOpen, importer] = useDisclosure();
   const mobile = useMediaQuery('(max-width: 48em)');
 
   const rows = useMemo(() => {
@@ -93,9 +95,14 @@ export function UnitPage() {
         subtitle={me.canEditPersonnel ? 'Efetivo da unidade · edição habilitada para este perfil.' : 'Efetivo da unidade · acesso somente para visualização.'}
         actions={
           me.canEditPersonnel && (
-            <Button leftSection={<IconPlus size={18} />} onClick={() => openEdit(null)}>
-              Adicionar pessoa
-            </Button>
+            <Group gap="xs">
+              <Button variant="default" leftSection={<IconFileSpreadsheet size={18} />} onClick={importer.open}>
+                Importar planilha
+              </Button>
+              <Button leftSection={<IconPlus size={18} />} onClick={() => openEdit(null)}>
+                Adicionar pessoa
+              </Button>
+            </Group>
           )
         }
       />
@@ -229,6 +236,7 @@ export function UnitPage() {
 
       <PersonDrawer person={viewing} onClose={() => setViewing(null)} onEdit={me.canEditPersonnel ? openEdit : undefined} onDelete={me.canEditPersonnel ? remove : undefined} />
       <UnitPersonForm opened={formOpen} onClose={form.close} person={editing} />
+      {me.canEditPersonnel && <UnitImportModal opened={importOpen} onClose={importer.close} />}
     </>
   );
 }

@@ -173,3 +173,24 @@ body {
   color: var(--mantine-color-sigase-7);
 }
 .vt-legend { display: inline-block; width: 22px; height: 10px; border-radius: 3px; }
+
+/* Importação do plano de férias: área para arrastar a planilha. */
+.import-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 36px 20px;
+  border: 2px dashed var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-lg);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+.import-drop:hover,
+.import-drop:focus-visible,
+.import-drop.is-dragging {
+  border-color: var(--mantine-color-sigase-5);
+  background: var(--mantine-color-sigase-light);
+  outline: none;
+}
